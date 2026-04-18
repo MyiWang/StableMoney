@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stablemoney"
+version = "0.1.0"
+description = "A-share backtesting framework with TDX data source integration"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+
+dependencies = [
+    "lib-pybroker>=1.2.0",
+    "pandas>=1.5.0",
+    "numpy>=1.23.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.0",
+    "ruff>=0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stablemoney"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/stablemoney/indicators/*.py" = ["N802"]  # Indicator factory functions use uppercase (MA, RSI, KDJ)
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["pybroker.*", "numba.*", "tqcenter.*"]
+ignore_missing_imports = true
