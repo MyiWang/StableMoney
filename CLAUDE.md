@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**StrategyConfig**（资金与自定义参数）、**BacktestConfig**（标的、日期、指标）、**ExecuteCallback**（交易逻辑）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
+StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**StrategyConfig**（资金与自定义参数）、**BacktestConfig**（标的、日期、指标）、**Algo**（交易逻辑，实现 `__call__` 的类或裸函数）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
 
 ## 常用命令
 
@@ -35,7 +35,6 @@ python examples/tdx_rsi_strategy.py
 TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir="...")  # 构造时注入指标，自动初始化 TDX
         ↓
 StrategyBuilder.run()
-  → 注册透传 indicator                    # 将预计算列桥接到 PyBroker 指标管线
   → PyBroker Strategy.backtest()
     → TdxDataSource._fetch_data()        # 逐股票处理
       → tq.get_market_data()             # 通过 tq 获取单股 OHLCV
@@ -45,16 +44,17 @@ StrategyBuilder.run()
       → 逐指标：tq.formula_zb()          # 通过 TDX 公式引擎计算指标
       → _merge_indicator_result()        # 解析响应，截取 warmup，合并到 DataFrame
       → pd.concat(all_stock_dfs)         # 拼接所有股票 DataFrame
-    → 透传 indicator 函数                 # 从 BarData 读取预计算列
-    → exec_fn(ctx)                       # 逐 bar 用户回调，通过 ctx.config.params 访问自定义参数
+    → algo(ctx)                          # 逐 bar 调用 Algo.__call__()
 ```
+
+TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `ExecContext.__getattr__` 直接从 `ColumnScope` 读取，无需 indicator 包装。
 
 ### 核心设计模式
 
 - **构造函数注入指标**：`TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=...)` 在构造时注册自定义列、保存指标定义、并自动初始化 TDX 连接（添加 `tdx_dir` 到 `sys.path`，调用 `tq.initialize()`）。
-- **透传指标**：TDX 计算的指标值通过 `StaticScope.register_custom_cols()` 注册为 DataFrame 自定义列。PyBroker 的 indicator 函数只是简单的列读取器（`getattr(bar_data, col_name)`），不做任何计算。
+- **Algo Protocol**：交易逻辑封装为实现了 `__call__(ctx: ExecContext) -> None` 的类。`Algo` 是 `@runtime_checkable` Protocol，不强制继承。参数通过构造函数注入（如 `RSIAlgo(stop_loss_pct=5.0)`）。也兼容裸函数回调（通过 `set_exec_fn()`）。
 - **Frozen dataclass**：`IndicatorDef`、`StrategyConfig`、`BacktestConfig` 均为 frozen。`StrategyConfig` 继承 PyBroker 的 frozen `StrategyConfig`，增加 `params: dict[str, Any]` 字段，回调中通过 `ctx.config.params` 访问。
-- **构建器模式**：`StrategyBuilder` 提供流式接口，支持 `set_backtest(BacktestConfig)` 一次性设置标的、日期，或通过 `set_symbols()` + `set_date_range()` 分步设置。调用 `run()` 完成校验、注册透传、执行回测。
+- **构建器模式**：`StrategyBuilder` 提供流式接口，支持 `set_backtest(BacktestConfig)` 一次性设置标的、日期，或通过 `set_symbols()` + `set_date_range()` 分步设置。调用 `run()` 完成校验、执行回测。
 
 ### TDX 集成
 
@@ -72,6 +72,13 @@ StrategyBuilder.run()
 ### 指标定义
 
 `IndicatorDef` 为声明式定义：`name`（TDX 公式名）、`params`（有序字典）、`outputs`（输出名元组）。内建指标为 `src/stablemoney/indicators/` 下的工厂函数（MA、EMA、MACD、RSI、KDJ、CCI、WR、BOLL、ATR、OBV、VOL_MA）。工厂函数故意使用大写命名（通过 ruff per-file-ignores 抑制 N802）。
+
+### Algo 系统
+
+- **Protocol**：`src/stablemoney/algo.py` 定义 `Algo` Protocol，`@runtime_checkable`，仅含 `__call__(ctx: ExecContext) -> None`
+- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（如 `RSIAlgo`）
+- **用户自定义**：任何实现 `__call__` 的类都满足 `Algo` Protocol，无需继承
+- **Builder 集成**：`set_algo(algo)` 注入 Algo 实例，`set_exec_fn(fn)` 兼容裸函数
 
 ### 配置
 

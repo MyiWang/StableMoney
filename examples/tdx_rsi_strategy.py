@@ -7,87 +7,31 @@ Run::
 
     python examples/tdx_rsi_strategy.py
 """
-
 from __future__ import annotations
 
-from typing import Any
+import io
+import sys
 
-import numpy as np
+# Fix Windows console encoding for Chinese output
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+import pybroker
+
+pybroker.disable_data_source_cache()
+pybroker.disable_indicator_cache()
 
 from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney.algos import RSIAlgo
+from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
-from stablemoney.tdx_data_source import TdxDataSource
-
-# ---------------------------------------------------------------------------
-# Trading logic
-# ---------------------------------------------------------------------------
-
-
-def rsi_strategy(ctx: Any) -> None:
-    """RSI oversold/overbought strategy with stop loss.
-
-    Entry:
-        - RSI < 35 (oversold)
-
-    Exit:
-        - RSI > 65 (overbought)
-        - Stop loss triggered (configurable via params)
-    """
-    rsi = ctx.RSI_14
-    ma = ctx.MA_20
-    stop_loss_pct = ctx.config.params["stop_loss_pct"]
-
-    # Skip bars where indicators haven't warmed up yet
-    if np.isnan(rsi[-1]) or np.isnan(ma[-1]):
-        return
-
-    pos = ctx.long_pos()
-
-    # Stop loss check
-    if pos is not None and pos.entries:
-        entry_price = float(pos.entries[0].price)
-        pnl_pct = (
-            (ctx.close[-1] - entry_price) / entry_price * 100
-        )
-        if pnl_pct <= -stop_loss_pct:
-            ctx.sell_all_shares()
-            return
-
-    # Buy signal: RSI oversold
-    if rsi[-1] < 35 and pos is None:
-        shares = int(ctx.config.initial_cash / ma[-1] / 10)
-        ctx.buy_shares = max(shares, 100)
-
-    # Sell signal: RSI overbought
-    if rsi[-1] > 65 and pos is not None:
-        ctx.sell_all_shares()
-
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import io
-    import sys
-
-    # Fix Windows console encoding for Chinese output
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-
-    # Disable PyBroker disk cache
-    import pybroker
-
-    pybroker.disable_data_source_cache()
-    pybroker.disable_indicator_cache()
-
     # Strategy configuration (capital, fees, custom params)
-    strategy_config = StrategyConfig(
-        initial_cash=500_000,
-        params={
-            "stop_loss_pct": 5.0,
-            "take_profit_pct": 10.0,
-        },
-    )
+    strategy_config = StrategyConfig(initial_cash=500_000)
 
     # Backtest configuration (symbols, dates, indicators)
     backtest_config = BacktestConfig(
@@ -106,7 +50,7 @@ if __name__ == "__main__":
         ))
         .set_config(strategy_config)
         .set_backtest(backtest_config)
-        .set_exec_fn(rsi_strategy)
+        .set_algo(RSIAlgo(stop_loss_pct=5.0))
         .run()
     )
 

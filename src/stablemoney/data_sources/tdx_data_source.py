@@ -1,5 +1,4 @@
 """TDX (通达信) data source for PyBroker backtesting."""
-
 from __future__ import annotations
 
 import sys
@@ -80,8 +79,8 @@ class TdxDataSource(DataSource):
     ) -> pd.DataFrame:
         """Called by PyBroker to fetch data.
 
-        For each stock: fetch K-line → convert to DataFrame →
-        compute indicators → merge into per-stock DataFrame.
+        For each stock: fetch K-line -> convert to DataFrame ->
+        compute indicators -> merge into per-stock DataFrame.
         Then concatenate all stocks into one DataFrame.
         """
         from tqcenter import tq

@@ -2,8 +2,6 @@
 
 基于 PyBroker 的 A 股规则型回测框架。通过通达信 TDX 数据源获取行情数据，利用 TDX 公式引擎计算技术指标，以构建器模式组装策略并执行回测。
 
-> **当前阶段**：框架已完成，TDX API 集成已实现（`formula_set_data` + `formula_zb`），待连接真实 TDX 环境做端到端验证。
-
 ## 目录
 
 - [项目架构](#项目架构)
@@ -20,7 +18,7 @@
 
 ### 组件模型
 
-一个回测策略由四个组件构成，通过 `StrategyBuilder` 组装。指标通过 `TdxDataSource` 构造函数注入：
+一个回测策略由四个组件构成，通过 `StrategyBuilder` 组装：
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -35,7 +33,7 @@
 │             BacktestConfig                               │
 │             (标的、日期、指标)                            │
 │                    ▼                                     │
-│             ExecuteCallback                              │
+│             Algo / exec_fn                               │
 │             (交易逻辑)                                   │
 │                    ▼                                     │
 │               TestResult                                 │
@@ -45,7 +43,7 @@
 - **TdxDataSource** — 数据源，构造时接收指标定义和 `tdx_dir`（自动初始化 TDX 连接），逐股票获取 OHLCV 行情和计算指标
 - **StrategyConfig** — 回测参数配置，扩展了 PyBroker 的 `StrategyConfig`，增加自定义 `params` 字典
 - **BacktestConfig** — 回测运行配置，包含标的、日期范围、指标定义
-- **ExecuteCallback** — 交易逻辑回调，接收 PyBroker 的 `ExecContext`，逐 bar 执行
+- **Algo** — 交易逻辑，实现 `__call__(ctx)` 的类（或裸函数），逐 bar 执行
 
 ### 数据流
 
@@ -53,34 +51,19 @@
 TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir="...")  # 构造时注入指标，自动初始化 TDX
         ↓
 StrategyBuilder.run()
-  │
-  ├─ 1. 注册透传 indicator 函数               ← 桥接预计算值到 PyBroker 指标管线
-  └─ 2. PyBroker Strategy.backtest()
-       │
-       ├─ TdxDataSource._fetch_data()        # 逐股票处理
-       │   ├─ 逐股票：tq.get_market_data()   ← 通过 tq 获取单股 OHLCV
-       │   ├─ _convert_kline_to_dataframe()  ← 转换为 PyBroker DataFrame
-       │   ├─ tq.formula_format_data()       ← 格式化 K 线数据
-       │   ├─ tq.formula_set_data()          ← 注入 K 线到公式引擎
-       │   ├─ 逐指标：tq.formula_zb()        ← TDX 公式引擎计算指标
-       │   ├─ _merge_indicator_result()      ← 解析响应，截取 warmup，合并
-       │   └─ pd.concat(all_stock_dfs)       ← 拼接所有股票 DataFrame
-       │
-       ├─ 透传 indicator 函数                 ← 从 BarData 读取预计算列
-       ├─ exec_fn(ctx)                        ← 逐 bar 用户回调
-       │   └─ ctx.config.params               ← 访问自定义参数
-       │
-       └─ TestResult                          ← 回测结果
+  → PyBroker Strategy.backtest()
+    → TdxDataSource._fetch_data()        # 逐股票处理
+      → tq.get_market_data()             # 通过 tq 获取单股 OHLCV
+      → _convert_kline_to_dataframe()    # 转换为 PyBroker DataFrame
+      → tq.formula_format_data()         # 格式化 K 线数据
+      → tq.formula_set_data()            # 注入 K 线到公式引擎
+      → 逐指标：tq.formula_zb()          # TDX 公式引擎计算指标
+      → _merge_indicator_result()        # 解析响应，截取 warmup，合并
+      → pd.concat(all_stock_dfs)         # 拼接所有股票 DataFrame
+    → algo(ctx)                          # 逐 bar 调用 Algo.__call__()
 ```
 
-### 透传指标模式
-
-TDX 在服务端计算指标，PyBroker 不做指标计算。通过「透传」模式桥接：
-
-1. `TdxDataSource(indicators=[...], tdx_dir=...)` 构造时注册自定义列并自动初始化 TDX 连接
-2. `_fetch_data()` 逐股票获取 K 线、计算指标、构建 DataFrame，最后拼接
-3. `StrategyBuilder` 注册简单的列读取函数（`getattr(bar_data, col_name)`）作为 PyBroker indicator
-4. 用户回调中通过 `ctx.RSI_14` 直接访问指标列（与 `ctx.close` 相同方式）
+TDX 预计算的指标列通过 `register_custom_cols()` 注册为 DataFrame 自定义列，`ctx.COLUMN_NAME` 通过 `ExecContext.__getattr__` 直接从 `ColumnScope` 读取。
 
 ## 环境与依赖
 
@@ -130,47 +113,15 @@ pip install -e ".[dev]"
 
 ## 快速开始
 
-### 方式一：代码构造（使用 StrategyConfig + BacktestConfig）
+### 方式一：使用内建 Algo 类
 
 ```python
-from pybroker.context import ExecContext
 from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
-from stablemoney.tdx_data_source import TdxDataSource
-from stablemoney.indicators import RSI, MA
+from stablemoney.algos import RSIAlgo
+from stablemoney.data_sources import TdxDataSource
+from stablemoney.indicators import MA, RSI
 
-
-def my_strategy(ctx: ExecContext) -> None:
-    rsi = ctx.RSI_14
-    ma = ctx.MA_20
-    stop_loss_pct = ctx.config.params["stop_loss_pct"]
-
-    # 跳过指标未预热完成的 bar
-    if np.isnan(rsi[-1]) or np.isnan(ma[-1]):
-        return
-
-    pos = ctx.long_pos()
-
-    # 止损
-    if pos is not None and pos.entries:
-        entry_price = float(pos.entries[0].price)
-        pnl_pct = (ctx.close[-1] - entry_price) / entry_price * 100
-        if pnl_pct <= -stop_loss_pct:
-            ctx.sell_all_shares()
-            return
-
-    # 买入：RSI 超卖
-    if rsi[-1] < 30 and pos is None:
-        ctx.buy_shares = 100
-
-    # 卖出：RSI 超买
-    if rsi[-1] > 70 and pos is not None:
-        ctx.sell_all_shares()
-
-
-strategy_config = StrategyConfig(
-    initial_cash=500_000,
-    params={"stop_loss_pct": 5.0, "take_profit_pct": 10.0},
-)
+strategy_config = StrategyConfig(initial_cash=500_000)
 backtest_config = BacktestConfig(
     symbols=["600519.SH", "000858.SZ"],
     start_date="2024-01-01",
@@ -186,63 +137,88 @@ result = (
     ))
     .set_config(strategy_config)
     .set_backtest(backtest_config)
-    .set_exec_fn(my_strategy)
+    .set_algo(RSIAlgo(stop_loss_pct=5.0))
     .run()
 )
 ```
 
-### 方式二：配置文件
-
-```yaml
-# strategy.yaml
-strategy:
-  initial_cash: 500000
-  buy_delay: 1
-  sell_delay: 1
-  params:
-    stop_loss_pct: 5.0
-    take_profit_pct: 10.0
-
-backtest:
-  symbols:
-    - "600519.SH"
-    - "000858.SZ"
-  start_date: "2024-01-01"
-  end_date: "2024-12-31"
-  period: "1d"
-  dividend_type: "front"
-  indicators:
-    - name: "RSI"
-      params: {period: 14}
-    - name: "MA"
-      params: {period: 20}
-```
+### 方式二：自定义 Algo 类
 
 ```python
-from stablemoney import StrategyBuilder
-from stablemoney.config_loader import load_config
-from stablemoney.indicator_def import IndicatorDef
-from stablemoney.tdx_data_source import TdxDataSource
+import numpy as np
+from pybroker.context import ExecContext
 
-strategy_config, backtest_config = load_config("strategy.yaml")
-indicators = [
-    IndicatorDef(**ind) for ind in backtest_config.to_dict()["indicators"]
-]
+from stablemoney import Algo, BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney.data_sources import TdxDataSource
+from stablemoney.indicators import MA, RSI
+
+
+class MyAlgo:
+    def __init__(self, stop_loss_pct: float = 5.0) -> None:
+        self.stop_loss_pct = stop_loss_pct
+
+    def __call__(self, ctx: ExecContext) -> None:
+        rsi = ctx.RSI_14
+        ma = ctx.MA_20
+
+        if np.isnan(rsi[-1]) or np.isnan(ma[-1]):
+            return
+
+        pos = ctx.long_pos()
+
+        if pos is not None and pos.entries:
+            entry_price = float(pos.entries[0].price)
+            pnl_pct = (ctx.close[-1] - entry_price) / entry_price * 100
+            if pnl_pct <= -self.stop_loss_pct:
+                ctx.sell_all_shares()  # type: ignore[no-untyped-call]
+                return
+
+        if rsi[-1] < 35 and pos is None:
+            ctx.buy_shares = 100
+
+        if rsi[-1] > 65 and pos is not None:
+            ctx.sell_all_shares()  # type: ignore[no-untyped-call]
+
 
 result = (
     StrategyBuilder()
-    .set_data_source(TdxDataSource(
-        indicators=indicators,
-        tdx_dir=r"D:\Applications\tdx_test\PYPlugins\user",
-    ))
-    .set_config(strategy_config)
-    .set_backtest(backtest_config)
+    .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=r"..."))
+    .set_config(StrategyConfig(initial_cash=500_000))
+    .set_symbols(["600519.SH"])
+    .set_date_range("2024-01-01", "2024-12-31")
+    .set_algo(MyAlgo(stop_loss_pct=5.0))
+    .run()
+)
+```
+
+### 方式三：裸函数回调（向后兼容）
+
+```python
+from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney.data_sources import TdxDataSource
+from stablemoney.indicators import MA, RSI
+
+
+def my_strategy(ctx) -> None:
+    rsi = ctx.RSI_14
+    if rsi[-1] < 30:
+        ctx.buy_shares = 100
+    if rsi[-1] > 70:
+        ctx.sell_all_shares()
+
+
+result = (
+    StrategyBuilder()
+    .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=r"..."))
+    .set_config(StrategyConfig(initial_cash=500_000))
+    .set_symbols(["600519.SH"])
+    .set_date_range("2024-01-01", "2024-12-31")
     .set_exec_fn(my_strategy)
     .run()
 )
 ```
 
-### 方式三：运行示例
+### 方式四：运行示例
 
 ```bash
 # TDX 真实数据示例（需 TDX 环境）
@@ -261,11 +237,17 @@ StableMoney/
 │   └── stablemoney/
 │       ├── __init__.py                     # 公共 API 导出
 │       ├── py.typed                        # PEP 561 类型标记
+│       ├── algo.py                         # Algo Protocol 定义
 │       ├── indicator_def.py                # IndicatorDef 数据类
 │       ├── strategy_config.py              # StrategyConfig + BacktestConfig
 │       ├── strategy_builder.py             # StrategyBuilder 构建器
-│       ├── tdx_data_source.py              # TdxDataSource 数据源
 │       ├── config_loader.py                # YAML 配置加载/保存
+│       ├── algos/                          # 内建 Algo 实现
+│       │   ├── __init__.py                 # 导出所有内建 Algo
+│       │   └── rsi_algo.py                 # RSI 超卖/超买 Algo
+│       ├── data_sources/                   # 数据源实现
+│       │   ├── __init__.py                 # 导出 TdxDataSource
+│       │   └── tdx_data_source.py          # TDX 通达信数据源
 │       └── indicators/                     # 内建指标工厂函数
 │           ├── __init__.py                 # 导出所有内建指标
 │           ├── trend.py                    # MA, EMA, MACD
@@ -278,6 +260,26 @@ StableMoney/
 ```
 
 ## 核心模块说明
+
+### Algo（`algo.py`）
+
+`Algo` 是一个 `@runtime_checkable` Protocol，定义交易逻辑接口：
+
+```python
+from stablemoney import Algo
+
+class MyAlgo:
+    def __call__(self, ctx: ExecContext) -> None:
+        ...
+
+isinstance(MyAlgo(), Algo)  # True — 任何有 __call__ 的类都满足
+```
+
+参数通过构造函数注入，无需 `params` 字典：
+
+```python
+algo = RSIAlgo(stop_loss_pct=5.0, oversold=30, overbought=70)
+```
 
 ### IndicatorDef（`indicator_def.py`）
 
@@ -315,32 +317,32 @@ config = StrategyConfig(
 
 ### StrategyBuilder（`strategy_builder.py`）
 
-流式构建器，组装并运行回测。支持 `set_backtest(BacktestConfig)` 一次性设置标的和日期：
+流式构建器，组装并运行回测：
 
 ```python
-# 使用 BacktestConfig
+# 使用 BacktestConfig + Algo 类
 result = (
     StrategyBuilder()
     .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
     .set_config(config)
     .set_backtest(backtest_config)
-    .set_exec_fn(trading_logic)
+    .set_algo(RSIAlgo(stop_loss_pct=5.0))
     .run()  # → TestResult
 )
 
-# 或分步设置
+# 或分步设置 + 裸函数
 result = (
     StrategyBuilder()
     .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
     .set_config(config)
-    .set_exec_fn(trading_logic)
+    .set_exec_fn(my_function)
     .set_symbols(["600519.SH"])
     .set_date_range("2024-01-01", "2024-12-31")
     .run()
 )
 ```
 
-### TdxDataSource（`tdx_data_source.py`）
+### TdxDataSource（`data_sources/tdx_data_source.py`）
 
 继承 PyBroker 的 `DataSource`，通过 `tqcenter`（`tq` 模块）访问 TDX 能力：
 
@@ -364,6 +366,12 @@ result = (
 | 波动 | `BOLL`, `ATR` | 布林带、真实波幅 |
 | 成交量 | `OBV`, `VOL_MA` | 能量潮、成交量均线 |
 
+### 内建 Algo
+
+| Algo | 说明 |
+|------|------|
+| `RSIAlgo` | RSI 超卖买入 / 超买卖出，可配置止损比例和阈值 |
+
 ## 开发进度
 
 ### 已完成
@@ -373,20 +381,21 @@ result = (
 | `IndicatorDef` 数据类 | 已完成 | 声明式指标定义，支持单值/多值输出 |
 | `StrategyConfig` / `BacktestConfig` | 已完成 | 扩展 PyBroker 配置，支持序列化 |
 | `config_loader` YAML 加载 | 已完成 | 配置文件读取/保存 |
-| `StrategyBuilder` 构建器 | 已完成 | 流式接口，透传指标注册 |
-| `TdxDataSource` 数据源 | 已完成 | 构造函数注入指标，`formula_zb` 逐股计算，向量化 K 线转换 |
+| `StrategyBuilder` 构建器 | 已完成 | 流式接口，支持 `set_algo()` 和 `set_exec_fn()` |
+| `TdxDataSource` 数据源 | 已完成 | 构造函数注入指标，`formula_zb` 逐股计算 |
+| `Algo` Protocol | 已完成 | `@runtime_checkable` Protocol，支持类和裸函数 |
+| `RSIAlgo` 内建策略 | 已完成 | RSI 超卖/超买 + 止损 |
 | 内建指标（11个） | 已完成 | MA, EMA, MACD, RSI, KDJ, CCI, WR, BOLL, ATR, OBV, VOL_MA |
 | TDX 真实数据示例 | 已完成 | `examples/tdx_rsi_strategy.py` |
 | 工具链配置 | 已完成 | ruff + mypy strict 通过 |
-| Git 版本控制 | 已完成 | 已初始化，含 `.gitignore` |
+| 端到端验证 | 已完成 | 通过真实 TDX 环境验证完整回测流程 |
 
 ### 待完成
 
 | 任务 | 优先级 | 说明 |
 |------|--------|------|
-| TDX 真实环境端到端测试 | 高 | 通过 `tq` 模块连接真实 TDX 环境，验证完整回测流程 |
 | 测试套件 | 中 | 暂无测试 |
-| 具体策略实现 | 待定 | 用户尚未指定第一个具体策略需求 |
+| 更多内建 Algo | 低 | 如 MACD 交叉、布林带突破等 |
 
 ## 编码规范
 
@@ -394,7 +403,6 @@ result = (
 - **风格检查**：`ruff check src/stablemoney`，目标规则集 E/W/F/I/N/UP/B/SIM/TCH
 - **类型检查**：`mypy src/stablemoney`，strict 模式
 - **命名约定**：文件以主类名命名（如 `strategy_builder.py`）；指标工厂函数使用大写（如 `MA()`、`RSI()`）
-- **封装原则**：不做没必要的封装——直接使用 PyBroker 的 `ExecContext`，不自定义包装类
 - **导入规范**：仅用于类型标注的导入放入 `TYPE_CHECKING` 块；使用 `collections.abc` 代替 `typing`（如 `Callable`、`Iterable`）；使用 `X | None` 代替 `Optional[X]`
 
 ## 已知限制
@@ -405,11 +413,10 @@ result = (
 
 ## 后续规划
 
-1. **接入真实 TDX 环境** — 通过 `tq` 模块连接真实 TDX 环境，跑通端到端回测
-2. **具体策略开发** — 根据用户需求实现第一个实际策略
+1. **更多内建 Algo** — MACD 交叉、布林带突破等常用策略模板
+2. **策略组合** — 支持多 Algo 组合（信号投票、过滤器链等）
 3. **前后端可视化** — 将项目扩展为前后端应用，前端展示回测结果
 4. **自定义指标支持** — 允许用户编写 PyBroker 原生指标函数
-5. **策略库** — 积累常用策略模板
 
 ## 参考
 
