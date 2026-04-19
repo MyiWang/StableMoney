@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**StrategyConfig**（资金与自定义参数）、**BacktestConfig**（标的、日期、指标）、**ExecuteCallback**（交易逻辑）。数据源为通达信 TDX（通过 `tqcenter` 包调用 DLL）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
+StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**StrategyConfig**（资金与自定义参数）、**BacktestConfig**（标的、日期、指标）、**ExecuteCallback**（交易逻辑）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
 
 ## 常用命令
 
@@ -20,9 +20,6 @@ pip install -e .
 
 # 安装开发依赖
 pip install -e ".[dev]"
-
-# 运行示例（Mock 数据，无需 TDX 环境）
-python examples/simple_rsi_strategy.py
 
 # 运行示例（需 TDX 环境）
 python examples/tdx_rsi_strategy.py
@@ -41,7 +38,7 @@ StrategyBuilder.run()
   → 注册透传 indicator                    # 将预计算列桥接到 PyBroker 指标管线
   → PyBroker Strategy.backtest()
     → TdxDataSource._fetch_data()        # 逐股票处理
-      → tq.get_market_data()             # 通过 DLL 获取单股 OHLCV
+      → tq.get_market_data()             # 通过 tq 获取单股 OHLCV
       → _convert_kline_to_dataframe()    # 转换为 PyBroker DataFrame
       → tq.formula_format_data()         # 格式化 K 线数据
       → tq.formula_set_data()            # 注入 K 线数据到公式引擎

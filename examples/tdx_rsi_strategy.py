@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
 from stablemoney.indicators import MA, RSI
 from stablemoney.tdx_data_source import TdxDataSource
@@ -31,9 +33,13 @@ def rsi_strategy(ctx: Any) -> None:
         - RSI > 65 (overbought)
         - Stop loss triggered (configurable via params)
     """
-    rsi = ctx.indicator("RSI_14")
-    ma = ctx.indicator("MA_20")
+    rsi = ctx.RSI_14
+    ma = ctx.MA_20
     stop_loss_pct = ctx.config.params["stop_loss_pct"]
+
+    # Skip bars where indicators haven't warmed up yet
+    if np.isnan(rsi[-1]) or np.isnan(ma[-1]):
+        return
 
     pos = ctx.long_pos()
 

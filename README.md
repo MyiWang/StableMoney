@@ -58,7 +58,7 @@ StrategyBuilder.run()
   └─ 2. PyBroker Strategy.backtest()
        │
        ├─ TdxDataSource._fetch_data()        # 逐股票处理
-       │   ├─ 逐股票：tq.get_market_data()   ← DLL 调用：单股 OHLCV
+       │   ├─ 逐股票：tq.get_market_data()   ← 通过 tq 获取单股 OHLCV
        │   ├─ _convert_kline_to_dataframe()  ← 转换为 PyBroker DataFrame
        │   ├─ tq.formula_format_data()       ← 格式化 K 线数据
        │   ├─ tq.formula_set_data()          ← 注入 K 线到公式引擎
@@ -80,7 +80,7 @@ TDX 在服务端计算指标，PyBroker 不做指标计算。通过「透传」�
 1. `TdxDataSource(indicators=[...], tdx_dir=...)` 构造时注册自定义列并自动初始化 TDX 连接
 2. `_fetch_data()` 逐股票获取 K 线、计算指标、构建 DataFrame，最后拼接
 3. `StrategyBuilder` 注册简单的列读取函数（`getattr(bar_data, col_name)`）作为 PyBroker indicator
-4. 用户回调中通过 `ctx.indicator("RSI_14")` 访问指标值
+4. 用户回调中通过 `ctx.RSI_14` 直接访问指标列（与 `ctx.close` 相同方式）
 
 ## 环境与依赖
 
@@ -140,9 +140,13 @@ from stablemoney.indicators import RSI, MA
 
 
 def my_strategy(ctx: ExecContext) -> None:
-    rsi = ctx.indicator("RSI_14")
-    ma = ctx.indicator("MA_20")
+    rsi = ctx.RSI_14
+    ma = ctx.MA_20
     stop_loss_pct = ctx.config.params["stop_loss_pct"]
+
+    # 跳过指标未预热完成的 bar
+    if np.isnan(rsi[-1]) or np.isnan(ma[-1]):
+        return
 
     pos = ctx.long_pos()
 
@@ -241,9 +245,6 @@ result = (
 ### 方式三：运行示例
 
 ```bash
-# Mock 数据示例（无需 TDX 环境）
-python examples/simple_rsi_strategy.py
-
 # TDX 真实数据示例（需 TDX 环境）
 python examples/tdx_rsi_strategy.py
 ```
@@ -272,7 +273,6 @@ StableMoney/
 │           ├── volatility.py               # BOLL, ATR
 │           └── volume.py                   # OBV, VOL_MA
 ├── examples/
-│   ├── simple_rsi_strategy.py              # Mock 数据 RSI 策略示例
 │   └── tdx_rsi_strategy.py                # TDX 真实数据 RSI 策略示例
 └── .venv/                                  # Python 虚拟环境
 ```
@@ -342,7 +342,7 @@ result = (
 
 ### TdxDataSource（`tdx_data_source.py`）
 
-继承 PyBroker 的 `DataSource`，通过 `tqcenter` 调用 TDX DLL：
+继承 PyBroker 的 `DataSource`，通过 `tqcenter`（`tq` 模块）访问 TDX 能力：
 
 - 构造函数接收 `indicators` 列表和 `tdx_dir`（自动初始化 TDX 连接）
 - 逐股票处理：每只股票独立获取 K 线、计算指标、构建 DataFrame，最后 `pd.concat` 拼接
@@ -376,7 +376,6 @@ result = (
 | `StrategyBuilder` 构建器 | 已完成 | 流式接口，透传指标注册 |
 | `TdxDataSource` 数据源 | 已完成 | 构造函数注入指标，`formula_zb` 逐股计算，向量化 K 线转换 |
 | 内建指标（11个） | 已完成 | MA, EMA, MACD, RSI, KDJ, CCI, WR, BOLL, ATR, OBV, VOL_MA |
-| Mock 数据示例 | 已完成 | `examples/simple_rsi_strategy.py` |
 | TDX 真实数据示例 | 已完成 | `examples/tdx_rsi_strategy.py` |
 | 工具链配置 | 已完成 | ruff + mypy strict 通过 |
 | Git 版本控制 | 已完成 | 已初始化，含 `.gitignore` |
@@ -385,7 +384,7 @@ result = (
 
 | 任务 | 优先级 | 说明 |
 |------|--------|------|
-| TDX 真实环境端到端测试 | 高 | 连接真实 DLL 验证完整回测流程 |
+| TDX 真实环境端到端测试 | 高 | 通过 `tq` 模块连接真实 TDX 环境，验证完整回测流程 |
 | 测试套件 | 中 | 暂无测试 |
 | 具体策略实现 | 待定 | 用户尚未指定第一个具体策略需求 |
 
@@ -400,13 +399,13 @@ result = (
 
 ## 已知限制
 
-1. **`tqcenter` 非标准包** — TDX 桥接层为本地 DLL 调用，通过 `TdxDataSource(tdx_dir=...)` 自动加载，不可通过 pip 安装
+1. **`tqcenter` 非标准包** — TDX 桥接层封装了内部 DLL 调用，通过 `TdxDataSource(tdx_dir=...)` 自动加载 `tq` 模块，不可通过 pip 安装
 2. **需运行通达信客户端** — TDX DLL 连接需要通达信客户端处于运行状态
 3. **无测试覆盖** — 当前没有任何单元测试或集成测试
 
 ## 后续规划
 
-1. **接入真实 TDX 环境** — 使用通达信 DLL 跑通端到端回测
+1. **接入真实 TDX 环境** — 通过 `tq` 模块连接真实 TDX 环境，跑通端到端回测
 2. **具体策略开发** — 根据用户需求实现第一个实际策略
 3. **前后端可视化** — 将项目扩展为前后端应用，前端展示回测结果
 4. **自定义指标支持** — 允许用户编写 PyBroker 原生指标函数
