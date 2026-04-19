@@ -34,25 +34,23 @@ class MockDataSource(DataSource):
     """Mock data source that generates random OHLCV + indicator data.
 
     Mimics the behaviour of :class:`TdxDataSource`:
-    - ``set_indicators()`` registers custom columns
+    - Constructor accepts indicator definitions
+    - Registers custom columns with PyBroker scope
     - ``_fetch_data()`` returns a PyBroker-format DataFrame
     """
 
-    def __init__(self) -> None:
+    def __init__(self, indicators: list[Any] | None = None) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
-        self._indicators: list[Any] = []
+        self._indicators: list[Any] = indicators or []
+        if self._indicators:
+            from pybroker.scope import StaticScope
 
-    def set_indicators(self, indicators: list[Any]) -> None:
-        """Register indicator columns (same API as TdxDataSource)."""
-        from pybroker.scope import StaticScope
-
-        self._indicators = indicators
-        scope = StaticScope.instance()
-        all_columns: list[str] = []
-        for ind in indicators:
-            all_columns.extend(ind.column_names)
-        if all_columns:
-            scope.register_custom_cols(all_columns)
+            scope = StaticScope.instance()
+            all_columns: list[str] = []
+            for ind in self._indicators:
+                all_columns.extend(ind.column_names)
+            if all_columns:
+                scope.register_custom_cols(all_columns)
 
     def _fetch_data(
         self,
@@ -226,10 +224,8 @@ if __name__ == "__main__":
     # Build and run
     result = (
         StrategyBuilder()
-        .set_data_source(MockDataSource())
+        .set_data_source(MockDataSource(indicators=[RSI(14), MA(20)]))
         .set_config(config)
-        .add_indicator(RSI(14))
-        .add_indicator(MA(20))
         .set_exec_fn(rsi_strategy)
         .set_symbols(["600519.SH"])
         .set_date_range("2024-01-01", "2024-12-31")

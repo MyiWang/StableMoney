@@ -9,7 +9,7 @@ from pybroker.indicator import indicator as register_indicator
 from pybroker.strategy import Strategy as PyBrokerStrategy
 from pybroker.strategy import TestResult
 
-from stablemoney.strategy_config import StrategyConfig
+from stablemoney.strategy_config import BacktestConfig, StrategyConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -18,29 +18,44 @@ if TYPE_CHECKING:
     from pybroker.context import ExecContext
     from pybroker.data import DataSource
 
-    from stablemoney.indicator_def import IndicatorDef
 
 
 class StrategyBuilder:
     """Builder for composing and running a backtest.
 
-    Provides a fluent interface to assemble the four core components:
+    Provides a fluent interface to assemble the core components:
 
     1. ``DataSource`` — market data source
     2. ``StrategyConfig`` — strategy configuration (with custom params)
-    3. ``IndicatorDef`` s — optional indicator definitions
+    3. ``BacktestConfig`` — backtest run configuration (symbols, dates, indicators)
     4. ``ExecuteCallback`` — trading logic (receives ``ExecContext``)
 
     Example::
 
         result = (
             StrategyBuilder()
-            .set_data_source(TdxDataSource())
+            .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
             .set_config(StrategyConfig(initial_cash=500_000))
-            .add_indicator(RSI(14))
             .set_exec_fn(my_callback)
             .set_symbols(["600519.SH"])
             .set_date_range("2024-01-01", "2024-12-31")
+            .run()
+        )
+
+    Or use ``BacktestConfig`` to set symbols, dates, and indicators together::
+
+        backtest = BacktestConfig(
+            symbols=["600519.SH"],
+            start_date="2024-01-01",
+            end_date="2024-12-31",
+            indicators=[RSI(14), MA(20)],
+        )
+        result = (
+            StrategyBuilder()
+            .set_data_source(TdxDataSource(backtest))
+            .set_config(StrategyConfig(initial_cash=500_000))
+            .set_backtest(backtest)
+            .set_exec_fn(my_callback)
             .run()
         )
     """
@@ -48,7 +63,7 @@ class StrategyBuilder:
     def __init__(self) -> None:
         self._data_source: DataSource | None = None
         self._config: StrategyConfig = StrategyConfig()
-        self._indicators: list[IndicatorDef] = []
+        self._backtest: BacktestConfig | None = None
         self._exec_fn: Callable[[ExecContext], None] | None = None
         self._symbols: list[str] = []
         self._start_date: datetime | None = None
@@ -64,16 +79,12 @@ class StrategyBuilder:
         self._config = config
         return self
 
-    def add_indicator(self, indicator: IndicatorDef) -> StrategyBuilder:
-        """Add an indicator definition."""
-        self._indicators.append(indicator)
-        return self
-
-    def add_indicators(
-        self, indicators: Iterable[IndicatorDef]
-    ) -> StrategyBuilder:
-        """Add multiple indicator definitions."""
-        self._indicators.extend(indicators)
+    def set_backtest(self, backtest: BacktestConfig) -> StrategyBuilder:
+        """Set backtest configuration (symbols, dates, indicators)."""
+        self._backtest = backtest
+        self._symbols = list(backtest.symbols)
+        self._start_date = self._parse_date(backtest.start_date)
+        self._end_date = self._parse_date(backtest.end_date)
         return self
 
     def set_exec_fn(
@@ -111,9 +122,8 @@ class StrategyBuilder:
 
         Steps:
             1. Validate all required parameters.
-            2. Inject indicators into the data source.
-            3. Register passthrough indicators with PyBroker.
-            4. Create and run a PyBroker ``Strategy``.
+            2. Register passthrough indicators with PyBroker.
+            3. Create and run a PyBroker ``Strategy``.
 
         Returns:
             ``TestResult`` from PyBroker.
@@ -125,16 +135,10 @@ class StrategyBuilder:
         assert self._start_date is not None
         assert self._end_date is not None
 
-        # 1. Inject indicators into DataSource
-        if self._indicators and hasattr(
-            self._data_source, "set_indicators"
-        ):
-            self._data_source.set_indicators(self._indicators)
-
-        # 2. Register passthrough indicators
+        # 1. Register passthrough indicators
         passthrough_indicators = self._register_passthrough_indicators()
 
-        # 3. Create and run PyBroker Strategy
+        # 2. Create and run PyBroker Strategy
         strategy = PyBrokerStrategy(
             data_source=self._data_source,
             start_date=self._start_date,
@@ -164,15 +168,16 @@ class StrategyBuilder:
     def _register_passthrough_indicators(self) -> list[Any]:
         """Register passthrough indicator functions with PyBroker.
 
-        Each passthrough reads a pre-computed column from ``BarData``
-        that was populated by the DataSource. This bridges server-side
-        computed indicators into PyBroker's indicator pipeline.
+        Reads indicator definitions from the DataSource and creates
+        passthrough functions that read pre-computed columns from BarData.
         """
-        if not self._indicators:
+        assert self._data_source is not None
+        indicators = getattr(self._data_source, "_indicators", [])
+        if not indicators:
             return []
 
         passthrough: list[Any] = []
-        for ind_def in self._indicators:
+        for ind_def in indicators:
             for col_name in ind_def.column_names:
                 passthrough.append(
                     register_indicator(

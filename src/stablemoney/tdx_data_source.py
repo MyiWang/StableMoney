@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -29,30 +30,42 @@ _TIMEFRAME_MAP: dict[str, str] = {
 class TdxDataSource(DataSource):
     """TDX (通达信) data source for PyBroker.
 
-    Fetches market data via the ``tq`` class (DLL) and computes
-    indicators via the TDX formula engine (``formula_process_mul``).
+    Fetches market data via ``tq.get_market_data()`` and computes
+    indicators via the TDX formula engine (``formula_zb``).
 
-    Usage::
+    Indicators are injected via the constructor::
 
-        ds = TdxDataSource()
-        ds.set_indicators([RSI(14), MA(20)])
-        # Then pass to StrategyBuilder
+        ds = TdxDataSource(indicators=[RSI(14), MA(20)])
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        indicators: list[IndicatorDef] | None = None,
+        tdx_dir: str | None = None,
+    ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
-        self._indicators: list[Any] = []
+        self._indicators: list[IndicatorDef] = indicators or []
+        self._init_tdx(tdx_dir)
+        self._register_custom_columns()
 
-    def set_indicators(self, indicators: list[Any]) -> None:
-        """Inject indicator definitions.
+    @staticmethod
+    def _init_tdx(tdx_dir: str | None) -> None:
+        """Add tqcenter to sys.path and initialize TDX connection."""
+        if not tdx_dir:
+            return
+        if tdx_dir not in sys.path:
+            sys.path.insert(0, tdx_dir)
+        from tqcenter import tq
 
-        Called by StrategyBuilder before running the backtest.
-        Also registers indicator column names as PyBroker custom columns.
-        """
-        self._indicators = indicators
+        tq.initialize(__file__)
+
+    def _register_custom_columns(self) -> None:
+        """Register indicator column names as PyBroker custom columns."""
+        if not self._indicators:
+            return
         scope = StaticScope.instance()
         all_columns: list[str] = []
-        for ind in indicators:
+        for ind in self._indicators:
             all_columns.extend(ind.column_names)
         if all_columns:
             scope.register_custom_cols(all_columns)
@@ -67,61 +80,70 @@ class TdxDataSource(DataSource):
     ) -> pd.DataFrame:
         """Called by PyBroker to fetch data.
 
-        1. Call ``tq.get_market_data()`` for OHLCV data.
-        2. For each IndicatorDef, call ``tq.formula_process_mul()``
-           to compute indicators via TDX formula engine.
-        3. Merge everything into a single PyBroker-format DataFrame.
+        For each stock: fetch K-line → convert to DataFrame →
+        compute indicators → merge into per-stock DataFrame.
+        Then concatenate all stocks into one DataFrame.
         """
         from tqcenter import tq
 
-        symbol_list = sorted(symbols)
         period = self._map_timeframe(timeframe)
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
 
-        # 1. Fetch K-line data
-        kline_data = tq.get_market_data(
-            stock_list=symbol_list,
-            period=period,
-            start_time=start_str,
-            end_time=end_str,
-            dividend_type="front",
-            fill_data=True,
-        )
-
-        df = self._convert_kline_to_dataframe(kline_data, symbol_list)
-
-        # 2. Fetch indicator data
-        for ind_def in self._indicators:
-            ind_data = tq.formula_process_mul(
-                formula_name=ind_def.name,
-                formula_arg=ind_def.formula_arg,
-                stock_list=symbol_list,
-                stock_period=period,
+        parts: list[pd.DataFrame] = []
+        for symbol in sorted(symbols):
+            # Fetch K-line data
+            kline_data = tq.get_market_data(
+                stock_list=[symbol],
+                period=period,
                 start_time=start_str,
                 end_time=end_str,
+                dividend_type="front",
+                fill_data=True,
             )
-            if ind_data:
-                df = self._merge_indicator_data(df, ind_data, ind_def, symbol_list)
 
+            # Convert to per-stock DataFrame
+            stock_df = self._convert_kline_to_dataframe(kline_data, symbol)
+            if stock_df.empty:
+                continue
+
+            # Compute indicators and merge into stock_df
+            if self._indicators and "Close" in kline_data:
+                bar_count = len(kline_data["Close"][symbol])
+                formatted = tq.formula_format_data(kline_data)
+                stock_formatted = formatted.get(symbol, [])
+                if stock_formatted:
+                    tq.formula_set_data(
+                        stock_code=symbol,
+                        stock_period=period,
+                        stock_data=stock_formatted,
+                        count=len(stock_formatted),
+                        dividend_type=1,
+                    )
+                    for ind_def in self._indicators:
+                        result = tq.formula_zb(
+                            formula_name=ind_def.name,
+                            formula_arg=ind_def.formula_arg,
+                        )
+                        self._merge_indicator_result(
+                            stock_df, result, ind_def, bar_count,
+                        )
+
+            parts.append(stock_df)
+
+        if not parts:
+            return pd.DataFrame(columns=["symbol", "date"])
+
+        df: pd.DataFrame = pd.concat(parts, ignore_index=True)
+        df = df.sort_values(by=["date", "symbol"]).reset_index(drop=True)
         return df
 
     @staticmethod
     def _convert_kline_to_dataframe(
         kline_data: dict[str, pd.DataFrame],
-        symbols: list[str],
+        symbol: str,
     ) -> pd.DataFrame:
-        """Convert TDX K-line data to PyBroker DataFrame format.
-
-        TDX format::
-
-            {"Close": DataFrame(index=DatetimeIndex, columns=["600519.SH"])}
-
-        PyBroker format::
-
-            DataFrame(columns=["symbol", "date", "open", "high", "low",
-                                "close", "volume"])
-        """
+        """Convert single-stock TDX K-line data to PyBroker DataFrame."""
         field_map = {
             "Open": "open",
             "High": "high",
@@ -130,100 +152,55 @@ class TdxDataSource(DataSource):
             "Volume": "volume",
         }
 
-        records: list[dict[str, Any]] = []
-        for symbol in symbols:
-            for tdx_field, pb_col in field_map.items():
-                if tdx_field not in kline_data:
-                    continue
-                series = kline_data[tdx_field][symbol]
-                for dt, val in series.items():
-                    # Check if we already have a record for this symbol+date
-                    existing = _find_record(records, symbol, dt)
-                    if existing is not None:
-                        existing[pb_col] = float(val) if pd.notna(val) else None
-                    else:
-                        record: dict[str, Any] = {
-                            "symbol": symbol,
-                            "date": dt,
-                        }
-                        for col in field_map.values():
-                            record[col] = None
-                        record[pb_col] = float(val) if pd.notna(val) else None
-                        records.append(record)
+        data: dict[str, Any] = {}
+        dates = None
+        for tdx_field, pb_col in field_map.items():
+            if tdx_field not in kline_data:
+                continue
+            series = kline_data[tdx_field][symbol]
+            data[pb_col] = series.values
+            if dates is None:
+                dates = series.index
 
-        df = pd.DataFrame(records)
-        if not df.empty:
-            df = df.sort_values(by=["date", "symbol"]).reset_index(drop=True)
+        if dates is None:
+            return pd.DataFrame(columns=["symbol", "date"])
+
+        data["date"] = dates
+        data["symbol"] = symbol
+        df: pd.DataFrame = pd.DataFrame(data)
         return df
 
     @staticmethod
-    def _merge_indicator_data(
+    def _merge_indicator_result(
         df: pd.DataFrame,
-        ind_data: dict[str, Any],
+        result: dict[str, Any],
         ind_def: IndicatorDef,
-        symbols: list[str],
-    ) -> pd.DataFrame:
-        """Merge TDX formula engine output into the main DataFrame.
+        bar_count: int,
+    ) -> None:
+        """Merge formula_zb output into a per-stock DataFrame.
 
-        The structure of ``ind_data`` depends on the TDX API response
-        and will be handled according to the indicator's output names.
+        ``formula_zb`` returns ``{"Value": {"DIF": ["1.23", ...], ...}}``.
+        Values are strings and include warmup bars.
+        We take the last ``bar_count`` values to align with K-line data.
         """
-        # The exact response format of formula_process_mul needs to be
-        # determined at integration time. This is a placeholder that
-        # handles the common case of per-stock indicator data.
-        column_names = ind_def.column_names
+        if not result or "Value" not in result:
+            return
+        value_dict: dict[str, list[str]] = result["Value"]
 
-        for symbol in symbols:
-            stock_data = ind_data.get(symbol, ind_data.get("Data", {}))
-            if not stock_data:
-                continue
+        def to_float(v: str | None) -> float:
+            return float(v) if v is not None else float("nan")
 
-            # Map indicator outputs to column names
-            if len(column_names) == 1:
-                # Single-value indicator
-                values = stock_data if isinstance(stock_data, list) else []
-                _merge_single_values(df, symbol, column_names[0], values)
-            else:
-                # Multi-value indicator
-                for i, col_name in enumerate(column_names):
-                    output_name = ind_def.outputs[i]
-                    values = (
-                        stock_data.get(output_name, [])
-                        if isinstance(stock_data, dict)
-                        else []
-                    )
-                    _merge_single_values(df, symbol, col_name, values)
-
-        return df
+        if len(ind_def.outputs) == 1 and ind_def.outputs[0] == "value":
+            raw_values = next(iter(value_dict.values()), [])
+            col_name = ind_def.column_names[0]
+            df[col_name] = [to_float(v) for v in raw_values[-bar_count:]]
+        else:
+            for i, output_name in enumerate(ind_def.outputs):
+                raw_values = value_dict.get(output_name, [])
+                col_name = ind_def.column_names[i]
+                df[col_name] = [to_float(v) for v in raw_values[-bar_count:]]
 
     @staticmethod
     def _map_timeframe(timeframe: str | None) -> str:
         """Map PyBroker timeframe to TDX period."""
         return _TIMEFRAME_MAP.get(timeframe or "1d", "1d")
-
-
-def _find_record(
-    records: list[dict[str, Any]], symbol: str, date: Any
-) -> dict[str, Any] | None:
-    """Find an existing record for the given symbol and date."""
-    for rec in records:
-        if rec["symbol"] == symbol and rec["date"] == date:
-            return rec
-    return None
-
-
-def _merge_single_values(
-    df: pd.DataFrame,
-    symbol: str,
-    col_name: str,
-    values: list[Any],
-) -> None:
-    """Merge a list of indicator values into the DataFrame."""
-    if col_name not in df.columns:
-        df[col_name] = None
-    mask = df["symbol"] == symbol
-    symbol_rows = df.loc[mask]
-    for i, val in enumerate(values):
-        if i < len(symbol_rows):
-            idx = symbol_rows.index[i]
-            df.at[idx, col_name] = val

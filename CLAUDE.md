@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略由四个组件通过构建器模式组装：**DataSource**、**StrategyConfig**、**Indicator**、**ExecuteCallback**。数据源为通达信 TDX（通过 `tqcenter` 包调用 DLL）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。
+StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**StrategyConfig**（资金与自定义参数）、**BacktestConfig**（标的、日期、指标）、**ExecuteCallback**（交易逻辑）。数据源为通达信 TDX（通过 `tqcenter` 包调用 DLL）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
 
 ## 常用命令
 
@@ -23,6 +23,9 @@ pip install -e ".[dev]"
 
 # 运行示例（Mock 数据，无需 TDX 环境）
 python examples/simple_rsi_strategy.py
+
+# 运行示例（需 TDX 环境）
+python examples/tdx_rsi_strategy.py
 ```
 
 暂无测试套件。
@@ -32,29 +35,41 @@ python examples/simple_rsi_strategy.py
 ### 数据流
 
 ```
+TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir="...")  # 构造时注入指标，自动初始化 TDX
+        ↓
 StrategyBuilder.run()
-  → DataSource.set_indicators()           # 向 PyBroker scope 注册自定义列
   → 注册透传 indicator                    # 将预计算列桥接到 PyBroker 指标管线
   → PyBroker Strategy.backtest()
-    → TdxDataSource._fetch_data()
-      → tq.get_market_data()             # 通过 DLL 获取 OHLCV
-      → tq.formula_process_mul()         # 通过 TDX 公式引擎计算指标
-      → 格式转换 + 合并                   # TDX Dict[str, DataFrame] → 单个 PyBroker DataFrame
+    → TdxDataSource._fetch_data()        # 逐股票处理
+      → tq.get_market_data()             # 通过 DLL 获取单股 OHLCV
+      → _convert_kline_to_dataframe()    # 转换为 PyBroker DataFrame
+      → tq.formula_format_data()         # 格式化 K 线数据
+      → tq.formula_set_data()            # 注入 K 线数据到公式引擎
+      → 逐指标：tq.formula_zb()          # 通过 TDX 公式引擎计算指标
+      → _merge_indicator_result()        # 解析响应，截取 warmup，合并到 DataFrame
+      → pd.concat(all_stock_dfs)         # 拼接所有股票 DataFrame
     → 透传 indicator 函数                 # 从 BarData 读取预计算列
     → exec_fn(ctx)                       # 逐 bar 用户回调，通过 ctx.config.params 访问自定义参数
 ```
 
 ### 核心设计模式
 
+- **构造函数注入指标**：`TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=...)` 在构造时注册自定义列、保存指标定义、并自动初始化 TDX 连接（添加 `tdx_dir` 到 `sys.path`，调用 `tq.initialize()`）。
 - **透传指标**：TDX 计算的指标值通过 `StaticScope.register_custom_cols()` 注册为 DataFrame 自定义列。PyBroker 的 indicator 函数只是简单的列读取器（`getattr(bar_data, col_name)`），不做任何计算。
 - **Frozen dataclass**：`IndicatorDef`、`StrategyConfig`、`BacktestConfig` 均为 frozen。`StrategyConfig` 继承 PyBroker 的 frozen `StrategyConfig`，增加 `params: dict[str, Any]` 字段，回调中通过 `ctx.config.params` 访问。
-- **构建器模式**：`StrategyBuilder` 提供流式接口，调用 `run()` 完成校验、注入指标、执行回测。
+- **构建器模式**：`StrategyBuilder` 提供流式接口，支持 `set_backtest(BacktestConfig)` 一次性设置标的、日期，或通过 `set_symbols()` + `set_date_range()` 分步设置。调用 `run()` 完成校验、注册透传、执行回测。
 
 ### TDX 集成
 
+- 构造函数 `tdx_dir` 参数：传入 tqcenter.py 所在目录，`TdxDataSource` 自动添加到 `sys.path` 并调用 `tq.initialize(__file__)`
 - 股票代码格式：`"600519.SH"`、`"000858.SZ"`（代码.市场后缀）
 - K 线数据：`tq.get_market_data()` 返回 `Dict[str, DataFrame]`，keys 为 "Open"/"High"/"Low"/"Close"/"Volume"/"Amount"，每个 DataFrame 以 DatetimeIndex 为索引、股票代码为列
-- 指标计算：`tq.formula_process_mul(formula_name, formula_arg, stock_list, stock_period, start_time, end_time)`，`formula_arg` 为逗号分隔参数（如 KDJ 的 `"9,3,3"`）
+- 数据获取采用逐股票模式：每只股票独立获取 K 线、计算指标、构建 DataFrame，最后 `pd.concat` 拼接
+- 指标计算流程（逐股票）：
+  1. `tq.formula_format_data(kline_data)` 格式化 K 线数据
+  2. `tq.formula_set_data(stock_code, stock_period, stock_data, count, dividend_type)` 注入数据
+  3. `tq.formula_zb(formula_name, formula_arg)` 计算指标
+  4. 返回 `{"Value": {"DIF": ["1.23", ...], ...}}` — 值为字符串或 `None`（warmup 期），取末尾 bar_count 个值对齐
 - TDX 源码参考：`D:/Applications/tdx_test/PYPlugins/user/tqcenter.py`
 
 ### 指标定义
@@ -63,7 +78,7 @@ StrategyBuilder.run()
 
 ### 配置
 
-通过 `config_loader.py` 支持 YAML 配置文件。两个配置类：`StrategyConfig`（回测参数）和 `BacktestConfig`（标的、日期、指标）。均支持 `to_dict()`/`from_dict()` 序列化。
+通过 `config_loader.py` 支持 YAML 配置文件。两个配置类：`StrategyConfig`（回测参数）和 `BacktestConfig`（标的、日期、指标）。`StrategyBuilder.set_backtest(BacktestConfig)` 可一次性设置标的和日期。均支持 `to_dict()`/`from_dict()` 序列化。
 
 ## 编码规范
 
