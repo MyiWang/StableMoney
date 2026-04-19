@@ -33,7 +33,7 @@
 │             BacktestConfig                               │
 │             (标的、日期、指标)                            │
 │                    ▼                                     │
-│             Algo / exec_fn                               │
+│             algo (callable)                               │
 │             (交易逻辑)                                   │
 │                    ▼                                     │
 │               TestResult                                 │
@@ -43,7 +43,7 @@
 - **TdxDataSource** — 数据源，构造时接收指标定义和 `tdx_dir`（自动初始化 TDX 连接），逐股票获取 OHLCV 行情和计算指标
 - **StrategyConfig** — 回测参数配置，扩展了 PyBroker 的 `StrategyConfig`，增加自定义 `params` 字典
 - **BacktestConfig** — 回测运行配置，包含标的、日期范围、指标定义
-- **Algo** — 交易逻辑，实现 `__call__(ctx)` 的类（或裸函数），逐 bar 执行
+- **algo** — 交易逻辑，实现 `__call__(ctx)` 的类（或裸函数），通过 `set_algo()` 注入
 
 ### 数据流
 
@@ -142,13 +142,13 @@ result = (
 )
 ```
 
-### 方式二：自定义 Algo 类
+### 方式二：自定义策略类
 
 ```python
 import numpy as np
 from pybroker.context import ExecContext
 
-from stablemoney import Algo, BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
 
@@ -191,7 +191,7 @@ result = (
 )
 ```
 
-### 方式三：裸函数回调（向后兼容）
+### 方式三：裸函数回调
 
 ```python
 from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
@@ -213,7 +213,7 @@ result = (
     .set_config(StrategyConfig(initial_cash=500_000))
     .set_symbols(["600519.SH"])
     .set_date_range("2024-01-01", "2024-12-31")
-    .set_exec_fn(my_strategy)
+    .set_algo(my_strategy)
     .run()
 )
 ```
@@ -237,7 +237,6 @@ StableMoney/
 │   └── stablemoney/
 │       ├── __init__.py                     # 公共 API 导出
 │       ├── py.typed                        # PEP 561 类型标记
-│       ├── algo.py                         # Algo Protocol 定义
 │       ├── indicator_def.py                # IndicatorDef 数据类
 │       ├── strategy_config.py              # StrategyConfig + BacktestConfig
 │       ├── strategy_builder.py             # StrategyBuilder 构建器
@@ -261,24 +260,26 @@ StableMoney/
 
 ## 核心模块说明
 
-### Algo（`algo.py`）
+### Algo（交易逻辑）
 
-`Algo` 是一个 `@runtime_checkable` Protocol，定义交易逻辑接口：
+交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`：
 
 ```python
-from stablemoney import Algo
-
+# 类方式
 class MyAlgo:
+    def __init__(self, stop_loss_pct: float = 5.0) -> None:
+        self.stop_loss_pct = stop_loss_pct
+
     def __call__(self, ctx: ExecContext) -> None:
         ...
 
-isinstance(MyAlgo(), Algo)  # True — 任何有 __call__ 的类都满足
-```
+# 裸函数方式
+def my_strategy(ctx: ExecContext) -> None:
+    ...
 
-参数通过构造函数注入，无需 `params` 字典：
-
-```python
-algo = RSIAlgo(stop_loss_pct=5.0, oversold=30, overbought=70)
+# 两种方式都通过 set_algo 注入
+builder.set_algo(MyAlgo(stop_loss_pct=5.0))
+builder.set_algo(my_strategy)
 ```
 
 ### IndicatorDef（`indicator_def.py`）
@@ -320,7 +321,7 @@ config = StrategyConfig(
 流式构建器，组装并运行回测：
 
 ```python
-# 使用 BacktestConfig + Algo 类
+# 使用 BacktestConfig + 策略类
 result = (
     StrategyBuilder()
     .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
@@ -335,7 +336,7 @@ result = (
     StrategyBuilder()
     .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
     .set_config(config)
-    .set_exec_fn(my_function)
+    .set_algo(my_function)
     .set_symbols(["600519.SH"])
     .set_date_range("2024-01-01", "2024-12-31")
     .run()
@@ -381,9 +382,8 @@ result = (
 | `IndicatorDef` 数据类 | 已完成 | 声明式指标定义，支持单值/多值输出 |
 | `StrategyConfig` / `BacktestConfig` | 已完成 | 扩展 PyBroker 配置，支持序列化 |
 | `config_loader` YAML 加载 | 已完成 | 配置文件读取/保存 |
-| `StrategyBuilder` 构建器 | 已完成 | 流式接口，支持 `set_algo()` 和 `set_exec_fn()` |
+| `StrategyBuilder` 构建器 | 已完成 | 流式接口，`set_algo()` 支持类和裸函数 |
 | `TdxDataSource` 数据源 | 已完成 | 构造函数注入指标，`formula_zb` 逐股计算 |
-| `Algo` Protocol | 已完成 | `@runtime_checkable` Protocol，支持类和裸函数 |
 | `RSIAlgo` 内建策略 | 已完成 | RSI 超卖/超买 + 止损 |
 | 内建指标（11个） | 已完成 | MA, EMA, MACD, RSI, KDJ, CCI, WR, BOLL, ATR, OBV, VOL_MA |
 | TDX 真实数据示例 | 已完成 | `examples/tdx_rsi_strategy.py` |

@@ -15,8 +15,6 @@ if TYPE_CHECKING:
     from pybroker.context import ExecContext
     from pybroker.data import DataSource
 
-    from stablemoney.algo import Algo
-
 
 class StrategyBuilder:
     """Builder for composing and running a backtest.
@@ -26,7 +24,7 @@ class StrategyBuilder:
     1. ``DataSource`` — market data source
     2. ``StrategyConfig`` — strategy configuration (with custom params)
     3. ``BacktestConfig`` — backtest run configuration (symbols, dates, indicators)
-    4. ``Algo`` — trading logic (callable class or function)
+    4. ``algo`` — trading logic (callable class or function)
 
     Example::
 
@@ -85,19 +83,9 @@ class StrategyBuilder:
         self._end_date = self._parse_date(backtest.end_date)
         return self
 
-    def set_algo(self, algo: Algo) -> StrategyBuilder:
-        """Set the trading logic using an ``Algo`` instance."""
+    def set_algo(self, algo: Callable[[ExecContext], None]) -> StrategyBuilder:
+        """Set the trading logic (class instance or plain function)."""
         self._exec_fn = algo
-        return self
-
-    def set_exec_fn(
-        self, fn: Callable[[ExecContext], None]
-    ) -> StrategyBuilder:
-        """Set the trading logic callback (plain function).
-
-        Prefer ``set_algo()`` for class-based strategies.
-        """
-        self._exec_fn = fn
         return self
 
     def set_symbols(
@@ -154,7 +142,7 @@ class StrategyBuilder:
             raise ValueError("DataSource is required. Call set_data_source().")
         if self._exec_fn is None:
             raise ValueError(
-                "ExecuteCallback is required. Call set_algo() or set_exec_fn()."
+                "ExecuteCallback is required. Call set_algo()."
             )
         if not self._symbols:
             raise ValueError("Symbols are required. Call set_symbols().")

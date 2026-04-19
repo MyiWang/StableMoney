@@ -52,7 +52,7 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 ### 核心设计模式
 
 - **构造函数注入指标**：`TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=...)` 在构造时注册自定义列、保存指标定义、并自动初始化 TDX 连接（添加 `tdx_dir` 到 `sys.path`，调用 `tq.initialize()`）。
-- **Algo Protocol**：交易逻辑封装为实现了 `__call__(ctx: ExecContext) -> None` 的类。`Algo` 是 `@runtime_checkable` Protocol，不强制继承。参数通过构造函数注入（如 `RSIAlgo(stop_loss_pct=5.0)`）。也兼容裸函数回调（通过 `set_exec_fn()`）。
+- **Algo 交易逻辑**：交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`。参数通过构造函数注入（如 `RSIAlgo(stop_loss_pct=5.0)`）。
 - **Frozen dataclass**：`IndicatorDef`、`StrategyConfig`、`BacktestConfig` 均为 frozen。`StrategyConfig` 继承 PyBroker 的 frozen `StrategyConfig`，增加 `params: dict[str, Any]` 字段，回调中通过 `ctx.config.params` 访问。
 - **构建器模式**：`StrategyBuilder` 提供流式接口，支持 `set_backtest(BacktestConfig)` 一次性设置标的、日期，或通过 `set_symbols()` + `set_date_range()` 分步设置。调用 `run()` 完成校验、执行回测。
 
@@ -75,10 +75,9 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 
 ### Algo 系统
 
-- **Protocol**：`src/stablemoney/algo.py` 定义 `Algo` Protocol，`@runtime_checkable`，仅含 `__call__(ctx: ExecContext) -> None`
+- **交易逻辑接口**：`set_algo()` 接受 `Callable[[ExecContext], None]`，支持类实例（实现 `__call__`）或裸函数
 - **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（如 `RSIAlgo`）
-- **用户自定义**：任何实现 `__call__` 的类都满足 `Algo` Protocol，无需继承
-- **Builder 集成**：`set_algo(algo)` 注入 Algo 实例，`set_exec_fn(fn)` 兼容裸函数
+- **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
 
 ### 配置
 
