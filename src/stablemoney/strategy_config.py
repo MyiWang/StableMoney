@@ -6,28 +6,33 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from stablemoney.indicator_def import IndicatorDef
+from stablemoney.market_sector import MarketSector, SectorFilter
 
 
 @dataclass(frozen=True)
 class BacktestConfig:
     """Backtest run configuration.
 
-    Contains everything needed to start a backtest run: symbols,
+    Contains everything needed to start a backtest run: symbols or sector,
     date range, initial capital, indicators, and warmup period.
+
+    Exactly one of ``symbols`` or ``sector`` must be provided.
     """
 
-    symbols: list[str]
-    start_date: str
-    end_date: str
+    symbols: list[str] = field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
     initial_cash: float = 100_000
     period: str = "1d"
     dividend_type: str = "front"
     indicators: list[IndicatorDef] = field(default_factory=list)
     warmup: int | None = None
+    sector: MarketSector | None = None
+    sector_filter: SectorFilter | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict."""
-        return {
+        result: dict[str, Any] = {
             "symbols": list(self.symbols),
             "start_date": self.start_date,
             "end_date": self.end_date,
@@ -43,7 +48,22 @@ class BacktestConfig:
                 for ind in self.indicators
             ],
             **({"warmup": self.warmup} if self.warmup is not None else {}),
+            **({"sector": self.sector.value} if self.sector is not None else {}),
+            **(
+                {
+                    "sector_filter": {
+                        "max_stocks": self.sector_filter.max_stocks,
+                        "sort_by": self.sector_filter.sort_by,
+                        "sort_ascending": self.sector_filter.sort_ascending,
+                        "min_market_cap": self.sector_filter.min_market_cap,
+                        "max_market_cap": self.sector_filter.max_market_cap,
+                    }
+                }
+                if self.sector_filter is not None
+                else {}
+            ),
         }
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BacktestConfig:
@@ -60,13 +80,31 @@ class BacktestConfig:
                     outputs=outputs,
                 )
             )
+
+        sector: MarketSector | None = None
+        if "sector" in data and data["sector"] is not None:
+            sector = MarketSector(data["sector"])
+
+        sector_filter: SectorFilter | None = None
+        if "sector_filter" in data and data["sector_filter"] is not None:
+            sf = data["sector_filter"]
+            sector_filter = SectorFilter(
+                max_stocks=sf.get("max_stocks"),
+                sort_by=sf.get("sort_by"),
+                sort_ascending=sf.get("sort_ascending", True),
+                min_market_cap=sf.get("min_market_cap"),
+                max_market_cap=sf.get("max_market_cap"),
+            )
+
         return cls(
-            symbols=data["symbols"],
-            start_date=data["start_date"],
-            end_date=data["end_date"],
+            symbols=data.get("symbols", []),
+            start_date=data.get("start_date", ""),
+            end_date=data.get("end_date", ""),
             initial_cash=data.get("initial_cash", 100_000),
             period=data.get("period", "1d"),
             dividend_type=data.get("dividend_type", "front"),
             indicators=indicators,
             warmup=data.get("warmup"),
+            sector=sector,
+            sector_filter=sector_filter,
         )

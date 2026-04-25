@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**BacktestConfig**（标的、日期、资金、指标、warmup）、**Algo**（交易逻辑，实现 `__call__` 的类或裸函数，通过 `AlgoConfig` 注入风控参数）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
+StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**BacktestConfig**（标的或板块、日期、资金、指标、warmup）、**Algo**（交易逻辑，实现 `__call__` 的类或裸函数，通过 `AlgoConfig` 注入风控参数）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。支持通过 `MarketSector` 枚举按市场板块（主板、创业板、科创板等）自动获取股票列表，并通过 `SectorFilter` 按真实市值排序和筛选。
 
 ## 常用命令
 
@@ -37,7 +37,7 @@ python -m venv .venv
 .venv/Scripts/python -m pytest tests/ --cov=stablemoney --cov-report=term-missing
 ```
 
-测试套件 105 个用例，覆盖 11 个测试文件，整体覆盖率 97%。
+测试套件 143 个用例，覆盖 12 个测试文件，整体覆盖率 87%。
 
 ## 架构
 
@@ -47,6 +47,10 @@ python -m venv .venv
 TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir="...")  # 构造时注入指标，自动初始化 TDX
         ↓
 StrategyBuilder.run()
+  → _resolve_symbols()                       # 解析 symbols 或 sector
+    → [sector 模式] tq.get_stock_list()       # 获取板块股票列表
+    → _fetch_market_cap()                     # 批量获取收盘价 + 逐股获取股本 → 计算真实市值
+    → 按 SectorFilter 排序/过滤/限制数量
   → PyBroker Strategy.backtest()
     → TdxDataSource._fetch_data()        # 逐股票处理
       → tq.get_market_data()             # 通过 tq 获取单股 OHLCV
@@ -65,8 +69,8 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 
 - **构造函数注入指标**：`TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=...)` 在构造时注册自定义列、保存指标定义、并自动初始化 TDX 连接（添加 `tdx_dir` 到 `sys.path`，调用 `tq.initialize()`）。
 - **Algo 交易逻辑**：交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`。风控参数通过 `AlgoConfig` 注入（如 `RSIAlgo(config=AlgoConfig(stop_loss_pct=5.0))`）。
-- **Frozen dataclass**：`IndicatorDef`、`AlgoConfig`、`BacktestConfig` 均为 frozen。`BacktestConfig` 包含 `initial_cash` 和 `warmup` 字段，`run()` 内部据此创建 PyBroker 的 `StrategyConfig`。
-- **构建器模式**：`StrategyBuilder` 提供流式接口，通过 `set_backtest(BacktestConfig)` 一次性设置标的、日期、资金、指标，调用 `run()` 完成校验、执行回测。
+- **Frozen dataclass**：`IndicatorDef`、`AlgoConfig`、`BacktestConfig`、`SectorFilter` 均为 frozen。`BacktestConfig` 的 `symbols` 和 `sector` 互斥（必须且只能提供一个），`sector` 通过 `MarketSector` 枚举指定市场板块。
+- **构建器模式**：`StrategyBuilder` 提供流式接口，通过 `set_backtest(BacktestConfig)` 一次性设置标的、日期、资金、指标，调用 `run()` 完成校验、sector 解析、执行回测。
 
 ### TDX 集成
 
@@ -91,6 +95,13 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 - **AlgoConfig**：`src/stablemoney/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`、`hold_bars`），作为 Algo 构造函数的参数注入
 - **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`MACrossAlgo`）
 - **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
+
+### Sector 系统
+
+- **MarketSector 枚举**：`src/stablemoney/market_sector.py`，映射 TDX `get_stock_list` 的 market code。支持：`ALL`（全A）、`MAIN_SH`（沪主板）、`MAIN_SZ`（深主板）、`CHINEXT`（创业板）、`STAR`（科创板）、`BSE`（北交所）
+- **SectorFilter frozen dataclass**：排序（`sort_by`："market_cap" 总市值 / "float_cap" 流通市值）、区间过滤（`min_market_cap`/`max_market_cap`，单位：亿元）、数量限制（`max_stocks`）
+- **市值计算**：`get_market_data` 批量获取收盘价 + `get_stock_info` 逐股获取股本（万股），市值（亿）= 收盘价 × 股本 / 10000
+- **执行顺序**：排序 → 区间过滤 → 取前 N 只
 
 ### 配置
 

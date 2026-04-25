@@ -36,10 +36,10 @@ class KDJMacdAlgo:
         if (
             pos is None
             and kdj_j[-1] < 0
-            and macd_dif[-1] < 0
-            and macd_dea[-1] < 0
+            and macd_dif[-1] > 0
+            and macd_dea[-1] > 0
         ):
-            shares = int(ctx.config.initial_cash / ctx.close[-1] / 10)
+            shares = int(ctx.config.initial_cash / ctx.close[-1])
             ctx.buy_shares = max(shares, 100)
             if self.config.stop_loss_pct > 0:
                 ctx.stop_loss_pct = self.config.stop_loss_pct

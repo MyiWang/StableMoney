@@ -21,7 +21,7 @@ import pybroker
 pybroker.disable_data_source_cache()
 pybroker.disable_indicator_cache()
 
-from stablemoney import AlgoConfig, BacktestConfig, StrategyBuilder
+from stablemoney import AlgoConfig, BacktestConfig, MarketSector, SectorFilter, StrategyBuilder
 from stablemoney.algos import KDJMacdAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import KDJ, MACD
@@ -31,15 +31,17 @@ from stablemoney.indicators import KDJ, MACD
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Backtest configuration (symbols, dates, capital, indicators)
+    # Backtest configuration: 上证主板市值 300-500 亿的股票
     backtest_config = BacktestConfig(
-        symbols=[
-            "000001.SZ",
-            "000858.SZ",
-            "601615.SH",
-        ],
-        start_date="2025-04-24",
-        end_date="2026-04-24",
+        sector=MarketSector.MAIN_SH,
+        sector_filter=SectorFilter(
+            sort_by="market_cap",
+            sort_ascending=False,
+            min_market_cap=500.0,
+            max_market_cap=1000.0,
+        ),
+        start_date="2019-01-01",
+        end_date="2023-12-31",
         initial_cash=100_000,
         indicators=[KDJ(9, 3, 3), MACD(12, 26, 9)],
         warmup=50,
@@ -58,9 +60,9 @@ if __name__ == "__main__":
         .set_algo(
             KDJMacdAlgo(
                 config=AlgoConfig(
-                    stop_loss_pct=5.0,
-                    take_profit_pct=10.0,
-                    hold_bars=20,
+                    stop_loss_pct=3,
+                    take_profit_pct=10,
+                    hold_bars=60,
                 ),
             )
         )
