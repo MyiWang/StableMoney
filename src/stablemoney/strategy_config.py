@@ -1,47 +1,11 @@
-"""Extended StrategyConfig and BacktestConfig with serialization support."""
+"""BacktestConfig with serialization support."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 
-from pybroker.config import StrategyConfig as PyBrokerStrategyConfig
-
 from stablemoney.indicator_def import IndicatorDef
-
-
-@dataclass(frozen=True)
-class StrategyConfig(PyBrokerStrategyConfig):
-    """Extended PyBroker StrategyConfig with custom params.
-
-    Custom parameters are accessible in the ExecuteCallback via
-    ``ctx.config.params`` and can be used for risk control, position
-    sizing, or any configurable logic.
-    """
-
-    params: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict."""
-        result: dict[str, Any] = {}
-        for f in fields(self):
-            value = getattr(self, f.name)
-            if f.name == "fee_mode" and value is not None:
-                result[f.name] = str(value)
-            else:
-                result[f.name] = value
-        return result
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> StrategyConfig:
-        """Deserialize from a plain dict.
-
-        Unknown keys are silently ignored so that JSON payloads from
-        future frontends don't break deserialization.
-        """
-        valid_names = {f.name for f in fields(cls)}
-        filtered = {k: v for k, v in data.items() if k in valid_names}
-        return cls(**filtered)
 
 
 @dataclass(frozen=True)
@@ -49,15 +13,17 @@ class BacktestConfig:
     """Backtest run configuration.
 
     Contains everything needed to start a backtest run: symbols,
-    date range, period, dividend type, and indicator definitions.
+    date range, initial capital, indicators, and warmup period.
     """
 
     symbols: list[str]
     start_date: str
     end_date: str
+    initial_cash: float = 100_000
     period: str = "1d"
     dividend_type: str = "front"
     indicators: list[IndicatorDef] = field(default_factory=list)
+    warmup: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict."""
@@ -65,6 +31,7 @@ class BacktestConfig:
             "symbols": list(self.symbols),
             "start_date": self.start_date,
             "end_date": self.end_date,
+            "initial_cash": self.initial_cash,
             "period": self.period,
             "dividend_type": self.dividend_type,
             "indicators": [
@@ -75,6 +42,7 @@ class BacktestConfig:
                 }
                 for ind in self.indicators
             ],
+            **({"warmup": self.warmup} if self.warmup is not None else {}),
         }
 
     @classmethod
@@ -96,7 +64,9 @@ class BacktestConfig:
             symbols=data["symbols"],
             start_date=data["start_date"],
             end_date=data["end_date"],
+            initial_cash=data.get("initial_cash", 100_000),
             period=data.get("period", "1d"),
             dividend_type=data.get("dividend_type", "front"),
             indicators=indicators,
+            warmup=data.get("warmup"),
         )

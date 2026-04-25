@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**StrategyConfig**（资金与自定义参数）、**BacktestConfig**（标的、日期、指标）、**Algo**（交易逻辑，实现 `__call__` 的类或裸函数）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
+StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建器模式组装：**DataSource**（含指标定义和 TDX 连接）、**BacktestConfig**（标的、日期、资金、指标、warmup）、**Algo**（交易逻辑，实现 `__call__` 的类或裸函数，通过 `AlgoConfig` 注入风控参数）。数据源为通达信 TDX（通过 `tqcenter` 包的 `tq` 模块访问 TDX 能力）。指标由 TDX 公式引擎在服务端计算，而非 PyBroker 计算。指标通过 `TdxDataSource` 构造函数注入。
 
 ## 常用命令
 
@@ -52,9 +52,9 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 ### 核心设计模式
 
 - **构造函数注入指标**：`TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=...)` 在构造时注册自定义列、保存指标定义、并自动初始化 TDX 连接（添加 `tdx_dir` 到 `sys.path`，调用 `tq.initialize()`）。
-- **Algo 交易逻辑**：交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`。参数通过构造函数注入（如 `RSIAlgo(stop_loss_pct=5.0)`）。
-- **Frozen dataclass**：`IndicatorDef`、`StrategyConfig`、`BacktestConfig` 均为 frozen。`StrategyConfig` 继承 PyBroker 的 frozen `StrategyConfig`，增加 `params: dict[str, Any]` 字段，回调中通过 `ctx.config.params` 访问。
-- **构建器模式**：`StrategyBuilder` 提供流式接口，支持 `set_backtest(BacktestConfig)` 一次性设置标的、日期，或通过 `set_symbols()` + `set_date_range()` 分步设置。调用 `run()` 完成校验、执行回测。
+- **Algo 交易逻辑**：交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`。风控参数通过 `AlgoConfig` 注入（如 `RSIAlgo(config=AlgoConfig(stop_loss_pct=5.0))`）。
+- **Frozen dataclass**：`IndicatorDef`、`AlgoConfig`、`BacktestConfig` 均为 frozen。`BacktestConfig` 包含 `initial_cash` 和 `warmup` 字段，`run()` 内部据此创建 PyBroker 的 `StrategyConfig`。
+- **构建器模式**：`StrategyBuilder` 提供流式接口，通过 `set_backtest(BacktestConfig)` 一次性设置标的、日期、资金、指标，调用 `run()` 完成校验、执行回测。
 
 ### TDX 集成
 
@@ -76,12 +76,13 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 ### Algo 系统
 
 - **交易逻辑接口**：`set_algo()` 接受 `Callable[[ExecContext], None]`，支持类实例（实现 `__call__`）或裸函数
+- **AlgoConfig**：`src/stablemoney/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`），作为 Algo 构造函数的参数注入
 - **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（如 `RSIAlgo`）
 - **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
 
 ### 配置
 
-通过 `config_loader.py` 支持 YAML 配置文件。两个配置类：`StrategyConfig`（回测参数）和 `BacktestConfig`（标的、日期、指标）。`StrategyBuilder.set_backtest(BacktestConfig)` 可一次性设置标的和日期。均支持 `to_dict()`/`from_dict()` 序列化。
+通过 `config_loader.py` 支持 YAML 配置文件。`BacktestConfig` 统一存放回测参数（标的、日期、资金、指标、warmup）。`StrategyBuilder.run()` 内部从 `BacktestConfig.initial_cash` 创建 PyBroker 的 `StrategyConfig`。支持 `to_dict()`/`from_dict()` 序列化。
 
 ## 编码规范
 

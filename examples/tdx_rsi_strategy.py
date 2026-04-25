@@ -7,6 +7,7 @@ Run::
 
     python examples/tdx_rsi_strategy.py
 """
+
 from __future__ import annotations
 
 import io
@@ -20,7 +21,7 @@ import pybroker
 pybroker.disable_data_source_cache()
 pybroker.disable_indicator_cache()
 
-from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney import AlgoConfig, BacktestConfig, StrategyBuilder
 from stablemoney.algos import RSIAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
@@ -30,27 +31,37 @@ from stablemoney.indicators import MA, RSI
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Strategy configuration (capital, fees, custom params)
-    strategy_config = StrategyConfig(initial_cash=500_000)
-
-    # Backtest configuration (symbols, dates, indicators)
+    # Backtest configuration (symbols, dates, capital, indicators)
     backtest_config = BacktestConfig(
-        symbols=["600519.SH", "000858.SZ"],
-        start_date="2024-01-01",
-        end_date="2024-12-31",
+        symbols=[
+            "000001.SZ",
+            "000858.SZ",
+            "000004.SZ",
+            "000006.SZ",
+            "000007.SZ",
+            "000008.SZ",
+            "000009.SZ",
+            "601615.SH",
+            "300001.SZ",
+        ],
+        start_date="2025-04-24",
+        end_date="2026-04-24",
+        initial_cash=100_000,
         indicators=[RSI(14), MA(20)],
+        warmup=110
     )
 
     # Build and run with TDX data source
     result = (
         StrategyBuilder()
-        .set_data_source(TdxDataSource(
-            indicators=backtest_config.indicators,
-            tdx_dir=r"D:\Applications\tdx_test\PYPlugins\user",
-        ))
-        .set_config(strategy_config)
+        .set_data_source(
+            TdxDataSource(
+                indicators=backtest_config.indicators,
+                tdx_dir=r"D:\Applications\tdx_test\PYPlugins\user",
+            )
+        )
         .set_backtest(backtest_config)
-        .set_algo(RSIAlgo(stop_loss_pct=5.0))
+        .set_algo(RSIAlgo(config=AlgoConfig(stop_loss_pct=5.0)))
         .run()
     )
 

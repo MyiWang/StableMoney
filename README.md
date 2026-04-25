@@ -18,32 +18,28 @@
 
 ### 组件模型
 
-一个回测策略由四个组件构成，通过 `StrategyBuilder` 组装：
+一个回测策略由三个组件构成，通过 `StrategyBuilder` 组装：
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                   StrategyBuilder                        │
 │                                                         │
-│  TdxDataSource(indicators=[...],  StrategyConfig        │
-│                 tdx_dir="...")    (回测参数+自定义params) │
-│  (行情 + 指标数据 + TDX 连接)       │                    │
+│  TdxDataSource(indicators=[...],  BacktestConfig        │
+│                 tdx_dir="...")    (标的、日期、资金、     │
+│  (行情 + 指标数据 + TDX 连接)      指标、warmup)         │
 │        │                           │                    │
 │        └───────────────────────────┘                    │
 │                    ▼                                     │
-│             BacktestConfig                               │
-│             (标的、日期、指标)                            │
-│                    ▼                                     │
-│             algo (callable)                               │
-│             (交易逻辑)                                   │
+│             algo + AlgoConfig                            │
+│             (交易逻辑 + 风控参数)                        │
 │                    ▼                                     │
 │               TestResult                                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
 - **TdxDataSource** — 数据源，构造时接收指标定义和 `tdx_dir`（自动初始化 TDX 连接），逐股票获取 OHLCV 行情和计算指标
-- **StrategyConfig** — 回测参数配置，扩展了 PyBroker 的 `StrategyConfig`，增加自定义 `params` 字典
-- **BacktestConfig** — 回测运行配置，包含标的、日期范围、指标定义
-- **algo** — 交易逻辑，实现 `__call__(ctx)` 的类（或裸函数），通过 `set_algo()` 注入
+- **BacktestConfig** — 回测运行配置，包含标的、日期范围、初始资金、指标定义、warmup
+- **Algo + AlgoConfig** — 交易逻辑（实现 `__call__(ctx)` 的类或裸函数）+ 通用风控参数（止损/止盈比例）
 
 ### 数据流
 
@@ -116,17 +112,18 @@ pip install -e ".[dev]"
 ### 方式一：使用内建 Algo 类
 
 ```python
-from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney import AlgoConfig, BacktestConfig, StrategyBuilder
 from stablemoney.algos import RSIAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
 
-strategy_config = StrategyConfig(initial_cash=500_000)
 backtest_config = BacktestConfig(
     symbols=["600519.SH", "000858.SZ"],
     start_date="2024-01-01",
     end_date="2024-12-31",
+    initial_cash=500_000,
     indicators=[RSI(14), MA(20)],
+    warmup=100,
 )
 
 result = (
@@ -135,9 +132,8 @@ result = (
         indicators=backtest_config.indicators,
         tdx_dir=r"D:\Applications\tdx_test\PYPlugins\user",
     ))
-    .set_config(strategy_config)
     .set_backtest(backtest_config)
-    .set_algo(RSIAlgo(stop_loss_pct=5.0))
+    .set_algo(RSIAlgo(config=AlgoConfig(stop_loss_pct=5.0)))
     .run()
 )
 ```
@@ -148,14 +144,14 @@ result = (
 import numpy as np
 from pybroker.context import ExecContext
 
-from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney import AlgoConfig, BacktestConfig, StrategyBuilder
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
 
 
 class MyAlgo:
-    def __init__(self, stop_loss_pct: float = 5.0) -> None:
-        self.stop_loss_pct = stop_loss_pct
+    def __init__(self, config: AlgoConfig) -> None:
+        self.config = config
 
     def __call__(self, ctx: ExecContext) -> None:
         rsi = ctx.RSI_14
@@ -166,10 +162,10 @@ class MyAlgo:
 
         pos = ctx.long_pos()
 
-        if pos is not None and pos.entries:
+        if pos is not None and pos.entries and self.config.stop_loss_pct > 0:
             entry_price = float(pos.entries[0].price)
             pnl_pct = (ctx.close[-1] - entry_price) / entry_price * 100
-            if pnl_pct <= -self.stop_loss_pct:
+            if pnl_pct <= -self.config.stop_loss_pct:
                 ctx.sell_all_shares()  # type: ignore[no-untyped-call]
                 return
 
@@ -180,13 +176,19 @@ class MyAlgo:
             ctx.sell_all_shares()  # type: ignore[no-untyped-call]
 
 
+backtest_config = BacktestConfig(
+    symbols=["600519.SH"],
+    start_date="2024-01-01",
+    end_date="2024-12-31",
+    initial_cash=500_000,
+    indicators=[RSI(14), MA(20)],
+)
+
 result = (
     StrategyBuilder()
-    .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=r"..."))
-    .set_config(StrategyConfig(initial_cash=500_000))
-    .set_symbols(["600519.SH"])
-    .set_date_range("2024-01-01", "2024-12-31")
-    .set_algo(MyAlgo(stop_loss_pct=5.0))
+    .set_data_source(TdxDataSource(indicators=backtest_config.indicators, tdx_dir=r"..."))
+    .set_backtest(backtest_config)
+    .set_algo(MyAlgo(config=AlgoConfig(stop_loss_pct=5.0)))
     .run()
 )
 ```
@@ -194,7 +196,7 @@ result = (
 ### 方式三：裸函数回调
 
 ```python
-from stablemoney import BacktestConfig, StrategyBuilder, StrategyConfig
+from stablemoney import BacktestConfig, StrategyBuilder
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
 
@@ -207,12 +209,18 @@ def my_strategy(ctx) -> None:
         ctx.sell_all_shares()
 
 
+backtest_config = BacktestConfig(
+    symbols=["600519.SH"],
+    start_date="2024-01-01",
+    end_date="2024-12-31",
+    initial_cash=500_000,
+    indicators=[RSI(14), MA(20)],
+)
+
 result = (
     StrategyBuilder()
-    .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)], tdx_dir=r"..."))
-    .set_config(StrategyConfig(initial_cash=500_000))
-    .set_symbols(["600519.SH"])
-    .set_date_range("2024-01-01", "2024-12-31")
+    .set_data_source(TdxDataSource(indicators=backtest_config.indicators, tdx_dir=r"..."))
+    .set_backtest(backtest_config)
     .set_algo(my_strategy)
     .run()
 )
@@ -238,7 +246,8 @@ StableMoney/
 │       ├── __init__.py                     # 公共 API 导出
 │       ├── py.typed                        # PEP 561 类型标记
 │       ├── indicator_def.py                # IndicatorDef 数据类
-│       ├── strategy_config.py              # StrategyConfig + BacktestConfig
+│       ├── algo_config.py                  # AlgoConfig 风控参数
+│       ├── strategy_config.py              # BacktestConfig
 │       ├── strategy_builder.py             # StrategyBuilder 构建器
 │       ├── config_loader.py                # YAML 配置加载/保存
 │       ├── algos/                          # 内建 Algo 实现
@@ -260,15 +269,17 @@ StableMoney/
 
 ## 核心模块说明
 
-### Algo（交易逻辑）
+### Algo + AlgoConfig（交易逻辑与风控参数）
 
-交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`：
+交易逻辑通过 `set_algo()` 注入，支持类实例或裸函数，只需实现 `__call__(ctx: ExecContext) -> None`。风控参数通过 `AlgoConfig` 注入：
 
 ```python
+from stablemoney import AlgoConfig
+
 # 类方式
 class MyAlgo:
-    def __init__(self, stop_loss_pct: float = 5.0) -> None:
-        self.stop_loss_pct = stop_loss_pct
+    def __init__(self, config: AlgoConfig) -> None:
+        self.config = config
 
     def __call__(self, ctx: ExecContext) -> None:
         ...
@@ -278,9 +289,16 @@ def my_strategy(ctx: ExecContext) -> None:
     ...
 
 # 两种方式都通过 set_algo 注入
-builder.set_algo(MyAlgo(stop_loss_pct=5.0))
+builder.set_algo(MyAlgo(config=AlgoConfig(stop_loss_pct=5.0)))
 builder.set_algo(my_strategy)
 ```
+
+`AlgoConfig` 为 frozen dataclass，包含通用风控参数：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `stop_loss_pct` | `float` | `0.0` | 止损百分比（0 表示不启用） |
+| `take_profit_pct` | `float` | `0.0` | 止盈百分比（0 表示不启用） |
 
 ### IndicatorDef（`indicator_def.py`）
 
@@ -302,44 +320,35 @@ kdj = KDJ(9, 3, 3)
 # .formula_arg  → "9,3,3"
 ```
 
-### StrategyConfig（`strategy_config.py`）
+### BacktestConfig（`strategy_config.py`）
 
-扩展 PyBroker 的 frozen dataclass，增加 `params` 字典：
+Frozen dataclass，包含回测所需的所有配置：
 
 ```python
-config = StrategyConfig(
-    initial_cash=500_000,
-    params={"stop_loss_pct": 5.0},
+backtest_config = BacktestConfig(
+    symbols=["600519.SH", "000858.SZ"],
+    start_date="2024-01-01",
+    end_date="2024-12-31",
+    initial_cash=500_000,       # 初始资金，默认 100,000
+    indicators=[RSI(14), MA(20)],
+    warmup=100,                 # warmup bar 数，默认 None（不跳过）
 )
-# 回调中访问：ctx.config.params["stop_loss_pct"]
+# 支持序列化：backtest_config.to_dict() / BacktestConfig.from_dict(data)
 ```
 
-同时包含 `BacktestConfig`，用于配置回测运行参数（标的、日期、指标列表），均支持 `to_dict()` / `from_dict()` 序列化。
+`StrategyBuilder.run()` 内部从 `BacktestConfig.initial_cash` 创建 PyBroker 的 `StrategyConfig`。
 
 ### StrategyBuilder（`strategy_builder.py`）
 
 流式构建器，组装并运行回测：
 
 ```python
-# 使用 BacktestConfig + 策略类
 result = (
     StrategyBuilder()
-    .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
-    .set_config(config)
+    .set_data_source(TdxDataSource(indicators=backtest_config.indicators, tdx_dir=r"..."))
     .set_backtest(backtest_config)
-    .set_algo(RSIAlgo(stop_loss_pct=5.0))
+    .set_algo(RSIAlgo(config=AlgoConfig(stop_loss_pct=5.0)))
     .run()  # → TestResult
-)
-
-# 或分步设置 + 裸函数
-result = (
-    StrategyBuilder()
-    .set_data_source(TdxDataSource(indicators=[RSI(14), MA(20)]))
-    .set_config(config)
-    .set_algo(my_function)
-    .set_symbols(["600519.SH"])
-    .set_date_range("2024-01-01", "2024-12-31")
-    .run()
 )
 ```
 
@@ -380,11 +389,12 @@ result = (
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | `IndicatorDef` 数据类 | 已完成 | 声明式指标定义，支持单值/多值输出 |
-| `StrategyConfig` / `BacktestConfig` | 已完成 | 扩展 PyBroker 配置，支持序列化 |
+| `AlgoConfig` 风控参数 | 已完成 | 通用止损/止盈配置 |
+| `BacktestConfig` | 已完成 | 统一回测配置（含 initial_cash、warmup），支持序列化 |
 | `config_loader` YAML 加载 | 已完成 | 配置文件读取/保存 |
 | `StrategyBuilder` 构建器 | 已完成 | 流式接口，`set_algo()` 支持类和裸函数 |
 | `TdxDataSource` 数据源 | 已完成 | 构造函数注入指标，`formula_zb` 逐股计算 |
-| `RSIAlgo` 内建策略 | 已完成 | RSI 超卖/超买 + 止损 |
+| `RSIAlgo` 内建策略 | 已完成 | RSI 超卖/超买 + AlgoConfig 止损 |
 | 内建指标（11个） | 已完成 | MA, EMA, MACD, RSI, KDJ, CCI, WR, BOLL, ATR, OBV, VOL_MA |
 | TDX 真实数据示例 | 已完成 | `examples/tdx_rsi_strategy.py` |
 | 工具链配置 | 已完成 | ruff + mypy strict 通过 |

@@ -1,12 +1,17 @@
 """RSI overbought/oversold algo."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from stablemoney.algo_config import AlgoConfig
+
 if TYPE_CHECKING:
     from pybroker.context import ExecContext
+
+_DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
 class RSIAlgo:
@@ -18,11 +23,11 @@ class RSIAlgo:
 
     def __init__(
         self,
-        stop_loss_pct: float = 5.0,
+        config: AlgoConfig = _DEFAULT_ALGO_CONFIG,
         oversold: int = 35,
         overbought: int = 65,
     ) -> None:
-        self.stop_loss_pct = stop_loss_pct
+        self.config = config
         self.oversold = oversold
         self.overbought = overbought
 
@@ -33,12 +38,14 @@ class RSIAlgo:
         if np.isnan(rsi[-1]) or np.isnan(ma[-1]):
             return
 
+        print(f"date [{ctx.date[-1]}]: rsi[{rsi[-1]}]")
+
         pos = ctx.long_pos()
 
-        if pos is not None and pos.entries:
+        if pos is not None and pos.entries and self.config.stop_loss_pct > 0:
             entry_price = float(pos.entries[0].price)
             pnl_pct = (ctx.close[-1] - entry_price) / entry_price * 100
-            if pnl_pct <= -self.stop_loss_pct:
+            if pnl_pct <= -self.config.stop_loss_pct:
                 ctx.sell_all_shares()  # type: ignore[no-untyped-call]
                 return
 
