@@ -25,9 +25,9 @@ class TestKDJ:
 
     def test_column_names(self) -> None:
         assert KDJ().column_names == [
-            "KDJ_9_3_3_K",
-            "KDJ_9_3_3_D",
-            "KDJ_9_3_3_J",
+            "KDJ_K",
+            "KDJ_D",
+            "KDJ_J",
         ]
 
     def test_formula_arg(self) -> None:

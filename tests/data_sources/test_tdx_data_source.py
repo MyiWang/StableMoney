@@ -114,10 +114,10 @@ class TestMergeIndicatorResult:
             }
         }
         TdxDataSource._merge_indicator_result(df, result, ind, bar_count=3)
-        assert "KDJ_9_3_3_K" in df.columns
-        assert "KDJ_9_3_3_D" in df.columns
-        assert "KDJ_9_3_3_J" in df.columns
-        assert df["KDJ_9_3_3_K"].tolist() == [10.0, 20.0, 30.0]
+        assert "KDJ_K" in df.columns
+        assert "KDJ_D" in df.columns
+        assert "KDJ_J" in df.columns
+        assert df["KDJ_K"].tolist() == [10.0, 20.0, 30.0]
 
     def test_truncates_to_bar_count(self) -> None:
         df = self._make_df(3)

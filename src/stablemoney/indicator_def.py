@@ -38,12 +38,13 @@ class IndicatorDef:
     def column_names(self) -> list[str]:
         """Generate column names for all outputs.
 
-        Single-value indicators return ``[full_name]``.
-        Multi-value indicators return ``[full_name_K, full_name_D, ...]``.
+        Single-value indicators return ``[full_name]`` (e.g. ``['RSI_14']``).
+        Multi-value indicators return ``[name_K, name_D, ...]``
+        (e.g. ``['KDJ_K', 'KDJ_D', 'KDJ_J']``).
         """
         if len(self.outputs) == 1 and self.outputs[0] == "value":
             return [self.full_name]
-        return [f"{self.full_name}_{out}" for out in self.outputs]
+        return [f"{self.name}_{out}" for out in self.outputs]
 
     @property
     def formula_arg(self) -> str:

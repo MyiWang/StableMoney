@@ -15,7 +15,7 @@ def simple_indicator() -> IndicatorDef:
 
 @pytest.fixture
 def multi_indicator() -> IndicatorDef:
-    """Multi-output indicator: KDJ(9,3,3) -> KDJ_9_3_3_K, KDJ_9_3_3_D, KDJ_9_3_3_J."""
+    """Multi-output indicator: KDJ(9,3,3) -> KDJ_K, KDJ_D, KDJ_J."""
     return IndicatorDef(
         "KDJ",
         {"k_period": 9, "k_smooth": 3, "d_smooth": 3},

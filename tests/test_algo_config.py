@@ -13,6 +13,7 @@ def test_default_values() -> None:
     cfg = AlgoConfig()
     assert cfg.stop_loss_pct == 0.0
     assert cfg.take_profit_pct == 0.0
+    assert cfg.hold_bars == 0
 
 
 def test_custom_values() -> None:
@@ -28,7 +29,7 @@ def test_frozen() -> None:
 
 
 def test_equality() -> None:
-    assert AlgoConfig(5.0, 10.0) == AlgoConfig(5.0, 10.0)
+    assert AlgoConfig(5.0, 10.0, 20) == AlgoConfig(5.0, 10.0, 20)
 
 
 def test_inequality() -> None:

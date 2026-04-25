@@ -8,27 +8,33 @@ StableMoney 是一个基于 PyBroker 的 A 股回测框架。策略通过构建�
 
 ## 常用命令
 
+项目使用 `.venv` 虚拟环境。如果虚拟环境不存在，先创建：
+
 ```bash
+python -m venv .venv
+```
+
+所有命令和依赖安装均在虚拟环境中执行（使用 `.venv/Scripts/` 前缀）：
+
+```bash
+# 安装依赖
+.venv/Scripts/pip install -e .
+.venv/Scripts/pip install -e ".[dev]"
+
 # 代码检查
-ruff check src/stablemoney
+.venv/Scripts/ruff check src/stablemoney
 
 # 类型检查（严格模式）
-mypy src/stablemoney
-
-# 可编辑模式安装
-pip install -e .
-
-# 安装开发依赖
-pip install -e ".[dev]"
+.venv/Scripts/mypy src/stablemoney
 
 # 运行示例（需 TDX 环境）
-python examples/tdx_rsi_strategy.py
+.venv/Scripts/python examples/tdx_rsi_strategy.py
 
 # 运行测试
-python -m pytest tests/ -v
+.venv/Scripts/python -m pytest tests/ -v
 
 # 运行测试 + 覆盖率
-python -m pytest tests/ --cov=stablemoney --cov-report=term-missing
+.venv/Scripts/python -m pytest tests/ --cov=stablemoney --cov-report=term-missing
 ```
 
 测试套件 105 个用例，覆盖 11 个测试文件，整体覆盖率 97%。
@@ -82,8 +88,8 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 ### Algo 系统
 
 - **交易逻辑接口**：`set_algo()` 接受 `Callable[[ExecContext], None]`，支持类实例（实现 `__call__`）或裸函数
-- **AlgoConfig**：`src/stablemoney/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`），作为 Algo 构造函数的参数注入
-- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（如 `RSIAlgo`）
+- **AlgoConfig**：`src/stablemoney/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`、`hold_bars`），作为 Algo 构造函数的参数注入
+- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`MACrossAlgo`）
 - **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
 
 ### 配置

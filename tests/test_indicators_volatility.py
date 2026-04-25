@@ -14,9 +14,9 @@ class TestBOLL:
 
     def test_column_names(self) -> None:
         assert BOLL().column_names == [
-            "BOLL_20_2_upper",
-            "BOLL_20_2_middle",
-            "BOLL_20_2_lower",
+            "BOLL_upper",
+            "BOLL_middle",
+            "BOLL_lower",
         ]
 
     def test_custom(self) -> None:

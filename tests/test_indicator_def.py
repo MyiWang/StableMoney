@@ -30,9 +30,9 @@ class TestColumnNames:
 
     def test_multi_output(self, multi_indicator: IndicatorDef) -> None:
         assert multi_indicator.column_names == [
-            "KDJ_9_3_3_K",
-            "KDJ_9_3_3_D",
-            "KDJ_9_3_3_J",
+            "KDJ_K",
+            "KDJ_D",
+            "KDJ_J",
         ]
 
     def test_no_params(self, no_param_indicator: IndicatorDef) -> None:

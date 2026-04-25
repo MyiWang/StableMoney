@@ -14,3 +14,4 @@ class AlgoConfig:
 
     stop_loss_pct: float = 0.0
     take_profit_pct: float = 0.0
+    hold_bars: int = 0

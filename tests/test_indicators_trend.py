@@ -39,9 +39,9 @@ class TestMACD:
 
     def test_column_names(self) -> None:
         assert MACD().column_names == [
-            "MACD_12_26_9_DIF",
-            "MACD_12_26_9_DEA",
-            "MACD_12_26_9_MACD",
+            "MACD_DIF",
+            "MACD_DEA",
+            "MACD_MACD",
         ]
 
     def test_formula_arg(self) -> None:
