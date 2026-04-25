@@ -414,7 +414,7 @@ class TestResolveSector:
 
         sf = SectorFilter(sort_by="market_cap", sort_ascending=True)
         result = _resolve_sector(MarketSector.ALL, sf)
-        assert result == ["A.SH", "B.SZ"]  # A=0.0 < B=5.0
+        assert result == ["B.SZ"]  # A skipped due to stock_info error
 
     @patch.dict(sys.modules, {})
     def test_market_cap_range_filter(self) -> None:

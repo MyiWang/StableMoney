@@ -237,11 +237,16 @@ def _fetch_market_cap(
 
     # Per-stock fetch shares and calculate market cap
     result: list[tuple[str, float]] = []
+    skipped = 0
     for code in codes:
         try:
             price = float(last_row[code])
         except (KeyError, ValueError, TypeError):
-            result.append((code, 0.0))
+            skipped += 1
+            continue
+
+        if price <= 0:
+            skipped += 1
             continue
 
         try:
@@ -250,13 +255,15 @@ def _fetch_market_cap(
             )
             shares_wan = float(info.get(share_field, 0))  # 万股
         except Exception:
-            result.append((code, 0.0))
+            skipped += 1
             continue
 
         # 市值(亿) = 收盘价 × 总股本(万股) / 10000
         mcap = price * shares_wan / 10000
         result.append((code, mcap))
 
-    valid = sum(1 for _, v in result if v > 0)
+    valid = len(result)
     print(f"[sector] 成功计算 {valid}/{len(codes)} 只股票的{cap_type}")
+    if skipped:
+        print(f"[sector] 跳过 {skipped} 只（价格异常或缺数据）")
     return result
