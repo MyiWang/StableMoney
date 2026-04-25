@@ -21,7 +21,13 @@ dependencies = [
 dev = [
     "mypy>=1.0",
     "ruff>=0.1.0",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stablemoney"]
@@ -46,6 +52,11 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/stablemoney/indicators/*.py" = ["N802"]  # Indicator factory functions use uppercase (MA, RSI, KDJ)
+"tests/**/*.py" = ["S101"]                    # assert is intentional in tests
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
 
 [tool.mypy]
 python_version = "3.10"

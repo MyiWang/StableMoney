@@ -23,9 +23,15 @@ pip install -e ".[dev]"
 
 # 运行示例（需 TDX 环境）
 python examples/tdx_rsi_strategy.py
+
+# 运行测试
+python -m pytest tests/ -v
+
+# 运行测试 + 覆盖率
+python -m pytest tests/ --cov=stablemoney --cov-report=term-missing
 ```
 
-暂无测试套件。
+测试套件 105 个用例，覆盖 11 个测试文件，整体覆盖率 97%。
 
 ## 架构
 

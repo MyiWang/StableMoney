@@ -262,6 +262,22 @@ StableMoney/
 │           ├── oscillator.py               # RSI, KDJ, CCI, WR
 │           ├── volatility.py               # BOLL, ATR
 │           └── volume.py                   # OBV, VOL_MA
+├── tests/                                  # 单元测试（105 个用例，97% 覆盖率）
+│   ├── conftest.py                         # 共享 fixture
+│   ├── test_indicator_def.py               # IndicatorDef 测试
+│   ├── test_algo_config.py                 # AlgoConfig 测试
+│   ├── test_strategy_config.py             # BacktestConfig 序列化测试
+│   ├── test_config_loader.py               # YAML 配置加载/保存测试
+│   ├── test_strategy_builder.py            # StrategyBuilder 测试
+│   ├── test_indicators_trend.py            # MA, EMA, MACD 测试
+│   ├── test_indicators_oscillator.py       # RSI, KDJ, CCI, WR 测试
+│   ├── test_indicators_volatility.py       # BOLL, ATR 测试
+│   ├── test_indicators_volume.py           # OBV, VOL_MA 测试
+│   ├── algos/
+│   │   ├── conftest.py                     # RSIAlgo mock helper
+│   │   └── test_rsi_algo.py               # RSIAlgo 交易逻辑测试
+│   └── data_sources/
+│       └── test_tdx_data_source.py         # TDX 数据源测试
 ├── examples/
 │   └── tdx_rsi_strategy.py                # TDX 真实数据 RSI 策略示例
 └── .venv/                                  # Python 虚拟环境
@@ -399,12 +415,12 @@ result = (
 | TDX 真实数据示例 | 已完成 | `examples/tdx_rsi_strategy.py` |
 | 工具链配置 | 已完成 | ruff + mypy strict 通过 |
 | 端到端验证 | 已完成 | 通过真实 TDX 环境验证完整回测流程 |
+| 单元测试 | 已完成 | pytest 105 个用例，97% 覆盖率 |
 
 ### 待完成
 
 | 任务 | 优先级 | 说明 |
 |------|--------|------|
-| 测试套件 | 中 | 暂无测试 |
 | 更多内建 Algo | 低 | 如 MACD 交叉、布林带突破等 |
 
 ## 编码规范
@@ -419,7 +435,6 @@ result = (
 
 1. **`tqcenter` 非标准包** — TDX 桥接层封装了内部 DLL 调用，通过 `TdxDataSource(tdx_dir=...)` 自动加载 `tq` 模块，不可通过 pip 安装
 2. **需运行通达信客户端** — TDX DLL 连接需要通达信客户端处于运行状态
-3. **无测试覆盖** — 当前没有任何单元测试或集成测试
 
 ## 后续规划
 
