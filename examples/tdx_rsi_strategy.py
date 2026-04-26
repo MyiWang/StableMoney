@@ -6,10 +6,12 @@ See CLAUDE.md for TDX setup details.
 Run::
 
     python examples/tdx_rsi_strategy.py
+    python examples/tdx_rsi_strategy.py --log-level DEBUG
 """
 
 from __future__ import annotations
 
+import argparse
 import io
 import sys
 
@@ -25,12 +27,23 @@ from stablemoney import AlgoConfig, BacktestConfig, StrategyBuilder
 from stablemoney.algos import RSIAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA, RSI
+from stablemoney.log import setup_logging
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="RSI strategy backtest")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="日志级别 (默认: INFO)",
+    )
+    args = parser.parse_args()
+    setup_logging(args.log_level)
+
     # Backtest configuration (symbols, dates, capital, indicators)
     backtest_config = BacktestConfig(
         symbols=[

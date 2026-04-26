@@ -1,12 +1,18 @@
 """TDX (通达信) data source for PyBroker backtesting."""
 from __future__ import annotations
 
+import logging
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from pybroker.data import DataSource
 from pybroker.scope import StaticScope
+
+logger = logging.getLogger(__name__)
+
+_TDX_DUMP_DIR = Path("tmp/tdx_debug")
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -91,6 +97,7 @@ class TdxDataSource(DataSource):
 
         parts: list[pd.DataFrame] = []
         for symbol in sorted(symbols):
+            logger.info("[TDX] 开始获取 %s 的 K 线数据", symbol)
             # Fetch K-line data
             kline_data = tq.get_market_data(
                 stock_list=[symbol],
@@ -104,13 +111,59 @@ class TdxDataSource(DataSource):
             # Convert to per-stock DataFrame
             stock_df = self._convert_kline_to_dataframe(kline_data, symbol)
             if stock_df.empty:
+                logger.debug("[TDX] %s: K线数据为空，跳过", symbol)
                 continue
+
+            logger.info(
+                "[TDX] %s: 获取到 %d 条 K 线, 日期范围 %s ~ %s",
+                symbol,
+                len(stock_df),
+                stock_df["date"].iloc[0],
+                stock_df["date"].iloc[-1],
+            )
+
+            # Log negative/zero close prices
+            bad_mask = stock_df["close"] <= 0
+            if bad_mask.any():
+                bad_prices = stock_df[bad_mask]
+                first_date = (
+                    bad_prices["date"].iloc[0]
+                    if "date" in bad_prices.columns
+                    else "N/A"
+                )
+                last_date = (
+                    bad_prices["date"].iloc[-1]
+                    if "date" in bad_prices.columns
+                    else "N/A"
+                )
+                logger.warning(
+                    "[TDX] %s: K线存在非正收盘价, 共 %d 条, "
+                    "最小值=%.4f, 日期范围=%s ~ %s, "
+                    "已导出到 %s",
+                    symbol,
+                    len(bad_prices),
+                    stock_df["close"].min(),
+                    first_date,
+                    last_date,
+                    _dump_stock_csv(symbol, stock_df, "bad_price"),
+                )
 
             # Compute indicators and merge into stock_df
             if self._indicators and "Close" in kline_data:
                 bar_count = len(kline_data["Close"][symbol])
                 formatted = tq.formula_format_data(kline_data)
                 stock_formatted = formatted.get(symbol, [])
+                fmt_len = len(stock_formatted)
+
+                # Log K-line vs formatted data length mismatch
+                if fmt_len != bar_count:
+                    logger.warning(
+                        "[TDX] %s: K线 bar_count=%d, formula_format_data=%d, "
+                        "差值=%d, 已导出到 %s",
+                        symbol, bar_count, fmt_len, bar_count - fmt_len,
+                        _dump_stock_csv(symbol, stock_df, "fmt_mismatch"),
+                    )
+
                 if stock_formatted:
                     tq.formula_set_data(
                         stock_code=symbol,
@@ -120,12 +173,38 @@ class TdxDataSource(DataSource):
                         dividend_type=1,
                     )
                     for ind_def in self._indicators:
+                        logger.info(
+                            "[TDX] %s: 计算指标 %s(%s)",
+                            symbol, ind_def.name, ind_def.formula_arg,
+                        )
                         result = tq.formula_zb(
                             formula_name=ind_def.name,
                             formula_arg=ind_def.formula_arg,
                         )
+                        # Log formula_zb return length vs bar_count
+                        if result and "Value" in result and result["Value"]:
+                            for out_name, vals in result["Value"].items():
+                                if vals is not None and len(vals) != bar_count:
+                                    logger.warning(
+                                        "[TDX] %s: formula_zb(%s) 输出 %s "
+                                        "返回 %d 值, K线 bar_count=%d, "
+                                        "差值=%d, 已导出到 %s",
+                                        symbol, ind_def.name, out_name,
+                                        len(vals), bar_count,
+                                        len(vals) - bar_count,
+                                        _dump_stock_csv(
+                                            symbol, stock_df,
+                                            f"zb_mismatch_{ind_def.name}",
+                                        ),
+                                    )
                         self._merge_indicator_result(
                             stock_df, result, ind_def, bar_count,
+                        )
+                        logger.debug(
+                            "[TDX] %s: 指标 %s 计算完成, 输出列=%s",
+                            symbol,
+                            ind_def.name,
+                            ind_def.column_names,
                         )
 
             parts.append(stock_df)
@@ -135,6 +214,12 @@ class TdxDataSource(DataSource):
 
         df: pd.DataFrame = pd.concat(parts, ignore_index=True)
         df = df.sort_values(by=["date", "symbol"]).reset_index(drop=True)
+        logger.info(
+            "[TDX] 数据获取完成: %d 条记录, %d 只股票",
+            len(df),
+            len(symbols),
+        )
+        logger.debug("[TDX] 最终 DataFrame:\n%s", df.to_string())
         return df
 
     @staticmethod
@@ -203,3 +288,16 @@ class TdxDataSource(DataSource):
     def _map_timeframe(timeframe: str | None) -> str:
         """Map PyBroker timeframe to TDX period."""
         return _TIMEFRAME_MAP.get(timeframe or "1d", "1d")
+
+
+def _dump_stock_csv(
+    symbol: str,
+    stock_df: pd.DataFrame,
+    tag: str,
+) -> Path:
+    """Dump stock DataFrame to CSV for TDX issue reporting."""
+    _TDX_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+    safe_symbol = symbol.replace(".", "_")
+    path = _TDX_DUMP_DIR / f"{safe_symbol}_{tag}.csv"
+    stock_df.to_csv(path, index=False)
+    return path

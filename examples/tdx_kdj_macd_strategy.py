@@ -6,10 +6,12 @@ See CLAUDE.md for TDX setup details.
 Run::
 
     python examples/tdx_kdj_macd_strategy.py
+    python examples/tdx_kdj_macd_strategy.py --log-level DEBUG
 """
 
 from __future__ import annotations
 
+import argparse
 import io
 import sys
 
@@ -25,20 +27,32 @@ from stablemoney import AlgoConfig, BacktestConfig, MarketSector, SectorFilter, 
 from stablemoney.algos import KDJMacdAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import KDJ, MACD
+from stablemoney.log import setup_logging
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="KDJ + MACD combined strategy backtest")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="日志级别 (默认: INFO)",
+    )
+    args = parser.parse_args()
+    setup_logging(args.log_level)
+
     # Backtest configuration: 上证主板市值 300-500 亿的股票
     backtest_config = BacktestConfig(
-        sector=MarketSector.MAIN_SH,
+        # sector=MarketSector.MAIN_SH,
+        symbols=["600188.SH"],
         sector_filter=SectorFilter(
             sort_by="market_cap",
             sort_ascending=False,
-            min_market_cap=500.0,
-            max_market_cap=1000.0,
+            # min_market_cap=500.0,
+            # max_market_cap=1000.0,
         ),
         start_date="2019-01-01",
         end_date="2023-12-31",

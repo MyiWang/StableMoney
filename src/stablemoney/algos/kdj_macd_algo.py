@@ -1,6 +1,7 @@
 """KDJ + MACD combined algo."""
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -9,6 +10,8 @@ from stablemoney.algo_config import AlgoConfig
 
 if TYPE_CHECKING:
     from pybroker.context import ExecContext
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
@@ -47,3 +50,9 @@ class KDJMacdAlgo:
                 ctx.stop_profit_pct = self.config.take_profit_pct
             if self.config.hold_bars > 0:
                 ctx.hold_bars = self.config.hold_bars
+            logger.info(
+                "KDJ+MACD买入 %s: date=%s, J=%.2f, DIF=%.4f, DEA=%.4f, shares=%d",
+                ctx.symbol, ctx.date[-1],
+                kdj_j[-1], macd_dif[-1], macd_dea[-1],
+                ctx.buy_shares,
+            )

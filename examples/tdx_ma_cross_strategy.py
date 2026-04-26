@@ -9,10 +9,12 @@ See CLAUDE.md for TDX setup details.
 Run::
 
     python examples/tdx_ma_cross_strategy.py
+    python examples/tdx_ma_cross_strategy.py --log-level DEBUG
 """
 
 from __future__ import annotations
 
+import argparse
 import io
 import sys
 
@@ -27,8 +29,19 @@ from stablemoney import BacktestConfig, StrategyBuilder
 from stablemoney.algos import MACrossAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA
+from stablemoney.log import setup_logging
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="MA crossover strategy backtest")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="日志级别 (默认: INFO)",
+    )
+    args = parser.parse_args()
+    setup_logging(args.log_level)
+
     backtest_config = BacktestConfig(
         symbols=["600519.SH", "000858.SZ", "000333.SZ"],
         start_date="2024-01-01",

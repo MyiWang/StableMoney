@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -10,6 +11,8 @@ from stablemoney.algo_config import AlgoConfig
 
 if TYPE_CHECKING:
     from pybroker.context import ExecContext
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
@@ -59,6 +62,13 @@ class MACrossAlgo:
                 ctx.stop_profit_pct = self.config.take_profit_pct
             if self.config.hold_bars > 0:
                 ctx.hold_bars = self.config.hold_bars
+            logger.info(
+                "金叉买入 %s: date=%s, %s=%.2f > %s=%.2f, shares=%d",
+                ctx.symbol, ctx.date[-1],
+                self._short_col, ma_short[-1],
+                self._long_col, ma_long[-1],
+                ctx.buy_shares,
+            )
 
         # Death cross: MA_short crosses below MA_long
         elif (
@@ -66,4 +76,10 @@ class MACrossAlgo:
             and ma_short[-2] >= ma_long[-2]
             and ma_short[-1] < ma_long[-1]
         ):
+            logger.info(
+                "死叉卖出 %s: date=%s, %s=%.2f < %s=%.2f",
+                ctx.symbol, ctx.date[-1],
+                self._short_col, ma_short[-1],
+                self._long_col, ma_long[-1],
+            )
             ctx.sell_all_shares()  # type: ignore[no-untyped-call]

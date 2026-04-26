@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pybroker.config import StrategyConfig as PyBrokerStrategyConfig
 from pybroker.strategy import Strategy as PyBrokerStrategy
 from pybroker.strategy import TestResult
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,7 +86,15 @@ class StrategyBuilder:
         assert self._backtest is not None
         assert self._exec_fn is not None
 
+        logger.info(
+            "开始回测: start=%s, end=%s, cash=%.0f",
+            self._backtest.start_date,
+            self._backtest.end_date,
+            self._backtest.initial_cash,
+        )
+
         symbols = self._resolve_symbols()
+        logger.info("回测标的: %s", symbols)
 
         config = PyBrokerStrategyConfig(
             initial_cash=self._backtest.initial_cash,
@@ -103,7 +114,13 @@ class StrategyBuilder:
         if self._backtest.warmup is not None:
             warmup = self._backtest.warmup
 
-        return strategy.backtest(warmup=warmup)
+        result = strategy.backtest(warmup=warmup)
+        logger.info(
+            "回测完成: 最终权益=%.2f, 交易次数=%d",
+            result.portfolio["equity"].iloc[-1],
+            len(result.trades),
+        )
+        return result
 
     def _resolve_symbols(self) -> list[str]:
         """Resolve symbols from sector or use explicit symbol list."""
@@ -165,7 +182,8 @@ def _resolve_sector(
     if not codes:
         return []
 
-    print(f"[sector] {sector.name}: 获取到 {len(codes)} 只股票")
+    logger.info("[sector] %s: 获取到 %d 只股票", sector.name, len(codes))
+    logger.debug("[sector] %s: 全部股票代码: %s", sector.name, codes)
 
     if sector_filter is None:
         return codes
@@ -192,14 +210,16 @@ def _resolve_sector(
                 continue
             filtered.append((code, val))
         stock_data = filtered
-        print(f"[sector] 市值区间过滤后剩余 {len(stock_data)} 只股票")
+        logger.info("[sector] 市值区间过滤后剩余 %d 只股票", len(stock_data))
+        logger.debug("[sector] 过滤后股票: %s", stock_data)
 
     result = [code for code, _ in stock_data]
 
     if sector_filter.max_stocks:
         result = result[: sector_filter.max_stocks]
 
-    print(f"[sector] 筛选完成，选中 {len(result)} 只股票")
+    logger.info("[sector] 筛选完成，选中 %d 只股票", len(result))
+    logger.debug("[sector] 最终选中股票: %s", result)
     return result
 
 
@@ -216,7 +236,7 @@ def _fetch_market_cap(
     """
     cap_type = "流通市值" if use_float else "总市值"
     share_field = "ActiveCapital" if use_float else "J_zgb"
-    print(f"[sector] 正在计算 {len(codes)} 只股票的{cap_type}...")
+    logger.info("[sector] 正在计算 %d 只股票的%s...", len(codes), cap_type)
 
     # Batch fetch close prices
     data = tq.get_market_data(  # type: ignore[attr-defined]
@@ -230,7 +250,7 @@ def _fetch_market_cap(
     )
     close_df = data.get("Close")
     if close_df is None or close_df.empty:
-        print("[sector] 收盘价数据为空，无法计算市值")
+        logger.warning("[sector] 收盘价数据为空，无法计算市值")
         return [(code, 0.0) for code in codes]
 
     last_row = close_df.iloc[-1]
@@ -263,7 +283,8 @@ def _fetch_market_cap(
         result.append((code, mcap))
 
     valid = len(result)
-    print(f"[sector] 成功计算 {valid}/{len(codes)} 只股票的{cap_type}")
+    logger.info("[sector] 成功计算 %d/%d 只股票的%s", valid, len(codes), cap_type)
     if skipped:
-        print(f"[sector] 跳过 {skipped} 只（价格异常或缺数据）")
+        logger.info("[sector] 跳过 %d 只（价格异常或缺数据）", skipped)
+    logger.debug("[sector] 市值明细: %s", result)
     return result

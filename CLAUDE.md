@@ -37,7 +37,7 @@ python -m venv .venv
 .venv/Scripts/python -m pytest tests/ --cov=stablemoney --cov-report=term-missing
 ```
 
-测试套件 143 个用例，覆盖 12 个测试文件，整体覆盖率 87%。
+测试套件 156 个用例，覆盖 13 个测试文件，整体覆盖率 85%。
 
 ## 架构
 
@@ -102,6 +102,17 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 - **SectorFilter frozen dataclass**：排序（`sort_by`："market_cap" 总市值 / "float_cap" 流通市值）、区间过滤（`min_market_cap`/`max_market_cap`，单位：亿元）、数量限制（`max_stocks`）
 - **市值计算**：`get_market_data` 批量获取收盘价 + `get_stock_info` 逐股获取股本（万股），市值（亿）= 收盘价 × 股本 / 10000
 - **执行顺序**：排序 → 区间过滤 → 取前 N 只
+
+### 日志系统
+
+- **模块**：`src/stablemoney/log.py`
+- **初始化**：`setup_logging(level="INFO", log_dir="logs")` 配置双输出：
+  - 控制台 Handler：仅 ERROR 级别
+  - 文件 Handler：`logs/backtest_YYYYMMDD_HHMMSS.log`，级别由参数控制
+- **使用方式**：各模块通过 `logger = logging.getLogger(__name__)` 获取 logger，使用 `stablemoney` 命名空间
+- **命令行参数**：example 脚本通过 `argparse --log-level DEBUG|INFO|WARNING|ERROR` 控制日志级别
+- **数据摘要**：`log_dataframe(logger, title, df, level)` 按级别输出——DEBUG 输出完整 DataFrame，INFO 输出 shape + head()
+- **日志内容覆盖**：数据获取流程、指标计算、sector 解析明细、交易决策（买入/卖出/止损）、回测起止
 
 ### 配置
 
