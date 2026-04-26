@@ -252,7 +252,11 @@ StableMoney/
 │       ├── config_loader.py                # YAML 配置加载/保存
 │       ├── algos/                          # 内建 Algo 实现
 │       │   ├── __init__.py                 # 导出所有内建 Algo
-│       │   └── rsi_algo.py                 # RSI 超卖/超买 Algo
+│       │   ├── rsi_algo.py                 # RSI 超卖/超买 Algo
+│       │   ├── kdj_macd_algo.py            # KDJ 金死叉 + MACD 过滤 Algo
+│       │   ├── kdj_macd_ma_algo.py         # KDJ 超卖 + MACD 多头 + MA 多头 Algo
+│       │   ├── macd_algo.py                # MACD 金死叉 Algo
+│       │   └── ma_cross_algo.py            # MA 均线交叉 Algo
 │       ├── data_sources/                   # 数据源实现
 │       │   ├── __init__.py                 # 导出 TdxDataSource
 │       │   └── tdx_data_source.py          # TDX 通达信数据源
@@ -274,12 +278,20 @@ StableMoney/
 │   ├── test_indicators_volatility.py       # BOLL, ATR 测试
 │   ├── test_indicators_volume.py           # OBV, VOL_MA 测试
 │   ├── algos/
-│   │   ├── conftest.py                     # RSIAlgo mock helper
-│   │   └── test_rsi_algo.py               # RSIAlgo 交易逻辑测试
+│   │   ├── conftest.py                     # Algo mock helpers
+│   │   ├── test_rsi_algo.py               # RSIAlgo 交易逻辑测试
+│   │   ├── test_kdj_macd_algo.py           # KDJMacdAlgo 测试
+│   │   ├── test_kdj_macd_ma_algo.py        # KdjMacdMaAlgo 测试
+│   │   ├── test_macd_algo.py              # MacdAlgo 测试
+│   │   └── test_ma_cross_algo.py           # MACrossAlgo 测试
 │   └── data_sources/
 │       └── test_tdx_data_source.py         # TDX 数据源测试
 ├── examples/
-│   └── tdx_rsi_strategy.py                # TDX 真实数据 RSI 策略示例
+│   ├── tdx_rsi_strategy.py                # TDX RSI 策略示例
+│   ├── tdx_kdj_macd_strategy.py           # TDX KDJ+MACD 策略示例
+│   ├── tdx_kdj_macd_ma_strategy.py        # TDX KDJ+MACD+MA 三信号策略示例
+│   ├── tdx_macd_strategy.py               # TDX MACD 策略示例
+│   └── tdx_ma_cross_strategy.py           # TDX MA 交叉策略示例
 └── .venv/                                  # Python 虚拟环境
 ```
 
@@ -397,6 +409,10 @@ result = (
 | Algo | 说明 |
 |------|------|
 | `RSIAlgo` | RSI 超卖买入 / 超买卖出，可配置止损比例和阈值 |
+| `KDJMacdAlgo` | KDJ 金叉买入 + MACD 多头过滤，KDJ 死叉卖出 |
+| `KdjMacdMaAlgo` | KDJ.J < 0 + MACD DIF/DEA > 0 + MA10 > MA20 三信号买入，仅靠风控退出 |
+| `MacdAlgo` | MACD 金叉买入（DIF > 0 且 DEA > 0），MACD 死叉卖出 |
+| `MACrossAlgo` | MA10/MA20 金叉买入，死叉卖出 |
 
 ## 开发进度
 
@@ -415,13 +431,11 @@ result = (
 | TDX 真实数据示例 | 已完成 | `examples/tdx_rsi_strategy.py` |
 | 工具链配置 | 已完成 | ruff + mypy strict 通过 |
 | 端到端验证 | 已完成 | 通过真实 TDX 环境验证完整回测流程 |
-| 单元测试 | 已完成 | pytest 105 个用例，97% 覆盖率 |
+| 单元测试 | 已完成 | pytest 211 个用例，85% 覆盖率 |
 
 ### 待完成
 
-| 任务 | 优先级 | 说明 |
-|------|--------|------|
-| 更多内建 Algo | 低 | 如 MACD 交叉、布林带突破等 |
+暂无
 
 ## 编码规范
 
@@ -438,8 +452,7 @@ result = (
 
 ## 后续规划
 
-1. **更多内建 Algo** — MACD 交叉、布林带突破等常用策略模板
-2. **策略组合** — 支持多 Algo 组合（信号投票、过滤器链等）
+1. **策略组合** — 支持多 Algo 组合（信号投票、过滤器链等）
 3. **前后端可视化** — 将项目扩展为前后端应用，前端展示回测结果
 4. **自定义指标支持** — 允许用户编写 PyBroker 原生指标函数
 

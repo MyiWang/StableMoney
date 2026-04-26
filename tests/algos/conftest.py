@@ -9,6 +9,7 @@ import pytest
 
 from stablemoney.algo_config import AlgoConfig
 from stablemoney.algos.kdj_macd_algo import KDJMacdAlgo
+from stablemoney.algos.kdj_macd_ma_algo import KdjMacdMaAlgo
 from stablemoney.algos.ma_cross_algo import MACrossAlgo
 from stablemoney.algos.macd_algo import MacdAlgo
 from stablemoney.algos.rsi_algo import RSIAlgo
@@ -195,3 +196,46 @@ def ma_cross_algo_with_risk() -> MACrossAlgo:
     return MACrossAlgo(
         config=AlgoConfig(stop_loss_pct=3, take_profit_pct=10, hold_bars=20),
     )
+
+
+def make_kdj_macd_ma_context(
+    *,
+    kdj_j: float,
+    macd_dif: float,
+    macd_dea: float,
+    ma_short: float,
+    ma_long: float,
+    close_price: float = 10.0,
+    has_position: bool = False,
+    entry_price: float | None = None,
+    initial_cash: float = 100_000,
+) -> MagicMock:
+    """Create a mock ExecContext for KdjMacdMaAlgo tests."""
+    ctx = MagicMock()
+    ctx.KDJ_J = np.array([kdj_j])
+    ctx.MACD_DIF = np.array([macd_dif])
+    ctx.MACD_DEA = np.array([macd_dea])
+    ctx.MA_10 = np.array([ma_short])
+    ctx.MA_20 = np.array([ma_long])
+    ctx.close = np.array([close_price])
+    ctx.date = np.array([np.datetime64("2024-06-01")])
+    ctx.config = MagicMock()
+    ctx.config.initial_cash = initial_cash
+    ctx.buy_shares = 0
+
+    if has_position:
+        pos = MagicMock()
+        entry_mock = MagicMock()
+        entry_mock.price = entry_price if entry_price is not None else close_price
+        pos.entries = [entry_mock]
+        ctx.long_pos.return_value = pos
+    else:
+        ctx.long_pos.return_value = None
+
+    return ctx
+
+
+@pytest.fixture
+def kdj_macd_ma_algo() -> KdjMacdMaAlgo:
+    """KdjMacdMaAlgo with default config."""
+    return KdjMacdMaAlgo()

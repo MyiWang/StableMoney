@@ -93,7 +93,7 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 
 - **交易逻辑接口**：`set_algo()` 接受 `Callable[[ExecContext], None]`，支持类实例（实现 `__call__`）或裸函数
 - **AlgoConfig**：`src/stablemoney/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`、`hold_bars`），作为 Algo 构造函数的参数注入
-- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`MACrossAlgo`）
+- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`MACrossAlgo`、`MacdAlgo`、`KdjMacdMaAlgo`）
 - **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
 
 ### Sector 系统
