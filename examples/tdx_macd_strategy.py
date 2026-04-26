@@ -1,12 +1,12 @@
-"""MA golden/death cross strategy example with real TDX data source.
+"""MACD golden/death cross strategy example with real TDX data source.
 
 Requires a running TDX environment with tqcenter installed.
 See CLAUDE.md for TDX setup details.
 
 Run::
 
-    python examples/tdx_ma_cross_strategy.py
-    python examples/tdx_ma_cross_strategy.py --log-level DEBUG
+    python examples/tdx_macd_strategy.py
+    python examples/tdx_macd_strategy.py --log-level DEBUG
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ pybroker.disable_data_source_cache()
 pybroker.disable_indicator_cache()
 
 from stablemoney import AlgoConfig, BacktestConfig, MarketSector, SectorFilter, StrategyBuilder
-from stablemoney.algos import MACrossAlgo
+from stablemoney.algos import MacdAlgo
 from stablemoney.data_sources import TdxDataSource
-from stablemoney.indicators import MA
+from stablemoney.indicators import MACD
 from stablemoney.log import setup_logging
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ from stablemoney.log import setup_logging
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MA golden/death cross strategy backtest")
+    parser = argparse.ArgumentParser(description="MACD golden/death cross strategy backtest")
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         start_date="2019-01-01",
         end_date="2023-12-31",
         initial_cash=100_000,
-        indicators=[MA(10), MA(20)],
+        indicators=[MACD(12, 26, 9)],
         warmup=50,
     )
 
@@ -72,7 +72,7 @@ if __name__ == "__main__":
         )
         .set_backtest(backtest_config)
         .set_algo(
-            MACrossAlgo(
+            MacdAlgo(
                 config=AlgoConfig(
                     stop_loss_pct=3,
                     take_profit_pct=10,
@@ -88,3 +88,9 @@ if __name__ == "__main__":
     print(f"初始资金: {backtest_config.initial_cash:,.0f}")
     print(f"最终权益: {result.portfolio['equity'].iloc[-1]:,.2f}")
     print(f"总交易次数: {len(result.trades)}")
+    print()
+    print("=== 订单明细 ===")
+    print(result.orders.to_string())
+    print()
+    print("=== 交易明细 ===")
+    print(result.trades.to_string())

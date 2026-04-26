@@ -1,4 +1,4 @@
-"""MA golden/death cross algo."""
+"""MACD golden/death cross algo."""
 from __future__ import annotations
 
 import logging
@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
-class MACrossAlgo:
-    """MA10/MA20 golden cross buy, death cross sell.
+class MacdAlgo:
+    """MACD DIF/DEA golden cross buy, death cross sell.
 
-    Buy: MA10 crosses above MA20 (golden cross)
-    Sell: MA10 crosses below MA20 (death cross)
+    Buy: DIF crosses above DEA (golden cross)
+    Sell: DIF crosses below DEA (death cross)
     Risk exits: stop loss, take profit, or max hold bars
     """
 
@@ -28,19 +28,21 @@ class MACrossAlgo:
         self.config = config
 
     def __call__(self, ctx: ExecContext) -> None:
-        ma_short = ctx.MA_10
-        ma_long = ctx.MA_20
+        dif = ctx.MACD_DIF
+        dea = ctx.MACD_DEA
 
-        if np.isnan(ma_short[-1]) or np.isnan(ma_long[-1]):
+        if np.isnan(dif[-1]) or np.isnan(dea[-1]):
             return
 
         pos = ctx.long_pos()
 
-        # Buy: MA golden cross (MA10 crosses above MA20)
+        # Buy: MACD golden cross (DIF crosses above DEA) with DIF > 0 and DEA > 0
         if (
             pos is None
-            and ma_short[-2] < ma_long[-2]
-            and ma_short[-1] > ma_long[-1]
+            and dif[-2] < dea[-2]
+            and dif[-1] > dea[-1]
+            and dif[-1] > 0
+            and dea[-1] > 0
         ):
             shares = int(ctx.config.initial_cash / ctx.close[-1])
             ctx.buy_shares = max(shares, 100)
@@ -51,27 +53,27 @@ class MACrossAlgo:
             if self.config.hold_bars > 0:
                 ctx.hold_bars = self.config.hold_bars
             logger.info(
-                "MA金叉买入 %s: date=%s MA10=%.4f MA20=%.4f "
+                "MACD金叉买入 %s: date=%s DIF=%.4f DEA=%.4f "
                 "shares=%d",
                 ctx.symbol,
                 ctx.date[-1],
-                ma_short[-1],
-                ma_long[-1],
+                dif[-1],
+                dea[-1],
                 ctx.buy_shares,
             )
             return
 
-        # Sell: MA death cross (MA10 crosses below MA20)
+        # Sell: MACD death cross (DIF crosses below DEA)
         if (
             pos is not None
-            and ma_short[-2] > ma_long[-2]
-            and ma_short[-1] < ma_long[-1]
+            and dif[-2] > dea[-2]
+            and dif[-1] < dea[-1]
         ):
             ctx.sell_all_shares()  # type: ignore[no-untyped-call]
             logger.info(
-                "MA死叉卖出 %s: date=%s MA10=%.4f MA20=%.4f",
+                "MACD死叉卖出 %s: date=%s DIF=%.4f DEA=%.4f",
                 ctx.symbol,
                 ctx.date[-1],
-                ma_short[-1],
-                ma_long[-1],
+                dif[-1],
+                dea[-1],
             )
