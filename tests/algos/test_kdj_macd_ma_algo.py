@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from stablemoney.algo_config import AlgoConfig
+from stablemoney.algos.algo_config import AlgoConfig
 from stablemoney.algos.kdj_macd_ma_algo import KdjMacdMaAlgo
 from tests.algos.conftest import make_kdj_macd_ma_context
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from stablemoney.algo_config import AlgoConfig
+from stablemoney.algos.algo_config import AlgoConfig
 
 if TYPE_CHECKING:
     from pybroker.context import ExecContext

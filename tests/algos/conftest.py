@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from stablemoney.algo_config import AlgoConfig
+from stablemoney.algos.algo_config import AlgoConfig
 from stablemoney.algos.kdj_macd_algo import KDJMacdAlgo
 from stablemoney.algos.kdj_macd_ma_algo import KdjMacdMaAlgo
 from stablemoney.algos.ma_cross_algo import MACrossAlgo

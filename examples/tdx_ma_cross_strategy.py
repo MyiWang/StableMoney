@@ -28,6 +28,7 @@ from stablemoney.algos import MACrossAlgo
 from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import MA
 from stablemoney.log import setup_logging
+from stablemoney.data_providers.tdx_data_provider import TdxDataProvider
 
 # ---------------------------------------------------------------------------
 # Run
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MA golden/death cross strategy backtest")
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default="ERROR",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="日志级别 (默认: INFO)",
     )
@@ -62,14 +63,16 @@ if __name__ == "__main__":
     )
 
     # Build and run with TDX data source
+    provider = TdxDataProvider(tdx_dir=r"D:\Applications\tdx_test\PYPlugins\user")
     result = (
         StrategyBuilder()
         .set_data_source(
             TdxDataSource(
                 indicators=backtest_config.indicators,
-                tdx_dir=r"D:\Applications\tdx_test\PYPlugins\user",
+                data_provider=provider,
             )
         )
+        .set_data_provider(provider)
         .set_backtest(backtest_config)
         .set_algo(
             MACrossAlgo(

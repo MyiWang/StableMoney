@@ -1,5 +1,4 @@
 """Strategy builder for composing and running backtests."""
-
 from __future__ import annotations
 
 import logging
@@ -10,16 +9,16 @@ from pybroker.config import StrategyConfig as PyBrokerStrategyConfig
 from pybroker.strategy import Strategy as PyBrokerStrategy
 from pybroker.strategy import TestResult
 
-logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pybroker.context import ExecContext
     from pybroker.data import DataSource
 
-    from stablemoney.market_sector import MarketSector, SectorFilter
+    from stablemoney.data_providers.data_provider import DataProvider
     from stablemoney.strategy_config import BacktestConfig
+
+logger = logging.getLogger(__name__)
 
 
 class StrategyBuilder:
@@ -30,9 +29,12 @@ class StrategyBuilder:
     1. ``DataSource`` — market data source
     2. ``BacktestConfig`` — backtest configuration (symbols, dates, capital, indicators)
     3. ``algo`` — trading logic (callable class or function)
+    4. ``DataProvider`` — data provider for sector resolution
+       (required only for sector-based backtests)
 
     Example::
 
+        provider = TdxDataProvider(tdx_dir=r"D:\\Applications\\tdx_test")
         backtest = BacktestConfig(
             symbols=["600519.SH"],
             start_date="2024-01-01",
@@ -42,7 +44,13 @@ class StrategyBuilder:
         )
         result = (
             StrategyBuilder()
-            .set_data_source(TdxDataSource(indicators=backtest.indicators))
+            .set_data_source(
+                TdxDataSource(
+                    indicators=backtest.indicators,
+                    data_provider=provider,
+                )
+            )
+            .set_data_provider(provider)
             .set_backtest(backtest)
             .set_algo(RSIAlgo(config=AlgoConfig(stop_loss_pct=5.0)))
             .run()
@@ -53,6 +61,7 @@ class StrategyBuilder:
         self._data_source: DataSource | None = None
         self._backtest: BacktestConfig | None = None
         self._exec_fn: Callable[[ExecContext], None] | None = None
+        self._data_provider: DataProvider | None = None
 
     def set_data_source(self, data_source: DataSource) -> StrategyBuilder:
         """Set the data source."""
@@ -67,6 +76,11 @@ class StrategyBuilder:
     def set_algo(self, algo: Callable[[ExecContext], None]) -> StrategyBuilder:
         """Set the trading logic (class instance or plain function)."""
         self._exec_fn = algo
+        return self
+
+    def set_data_provider(self, data_provider: DataProvider) -> StrategyBuilder:
+        """Set the data provider for sector resolution."""
+        self._data_provider = data_provider
         return self
 
     def run(self) -> TestResult:
@@ -134,7 +148,13 @@ class StrategyBuilder:
                 "Either 'symbols' or 'sector' must be provided in BacktestConfig."
             )
 
-        return _resolve_sector(
+        if self._data_provider is None:
+            raise ValueError(
+                "DataProvider is required for sector resolution. "
+                "Call set_data_provider()."
+            )
+
+        return self._data_provider.resolve_sector(
             self._backtest.sector,
             self._backtest.sector_filter,
         )
@@ -158,133 +178,3 @@ class StrategyBuilder:
             raise ValueError(
                 "Either 'symbols' or 'sector' must be provided in BacktestConfig."
             )
-
-
-def _resolve_sector(
-    sector: MarketSector,
-    sector_filter: SectorFilter | None,
-) -> list[str]:
-    """Fetch stock codes from TDX for the given sector and apply filter.
-
-    Requires TDX to be initialized (via ``TdxDataSource`` with ``tdx_dir``).
-
-    Market cap is calculated as: close_price × total_shares(万股) / 10000 = 亿元.
-    """
-    try:
-        from tqcenter import tq
-    except ImportError as e:
-        raise ImportError(
-            "Sector resolution requires TDX. "
-            "Initialize TdxDataSource with tdx_dir before using sector."
-        ) from e
-
-    codes: list[str] = tq.get_stock_list(market=sector.value)
-    if not codes:
-        return []
-
-    logger.info("[sector] %s: 获取到 %d 只股票", sector.name, len(codes))
-    logger.debug("[sector] %s: 全部股票代码: %s", sector.name, codes)
-
-    if sector_filter is None:
-        return codes
-
-    # Sort by real market cap if sort_by is set
-    if sector_filter.sort_by is not None:
-        use_float = sector_filter.sort_by == "float_cap"
-        stock_data = _fetch_market_cap(tq, codes, use_float=use_float)
-        stock_data.sort(
-            key=lambda x: x[1], reverse=not sector_filter.sort_ascending
-        )
-    else:
-        stock_data = [(code, 0.0) for code in codes]
-
-    # Filter by market cap range (亿元)
-    has_min = sector_filter.min_market_cap is not None
-    has_max = sector_filter.max_market_cap is not None
-    if has_min or has_max:
-        filtered: list[tuple[str, float]] = []
-        for code, val in stock_data:
-            if has_min and val < sector_filter.min_market_cap:  # type: ignore[operator]
-                continue
-            if has_max and val > sector_filter.max_market_cap:  # type: ignore[operator]
-                continue
-            filtered.append((code, val))
-        stock_data = filtered
-        logger.info("[sector] 市值区间过滤后剩余 %d 只股票", len(stock_data))
-        logger.debug("[sector] 过滤后股票: %s", stock_data)
-
-    result = [code for code, _ in stock_data]
-
-    if sector_filter.max_stocks:
-        result = result[: sector_filter.max_stocks]
-
-    logger.info("[sector] 筛选完成，选中 %d 只股票", len(result))
-    logger.debug("[sector] 最终选中股票: %s", result)
-    return result
-
-
-def _fetch_market_cap(
-    tq: object,
-    codes: list[str],
-    *,
-    use_float: bool = False,
-) -> list[tuple[str, float]]:
-    """Calculate real market cap (亿元) for each stock.
-
-    Uses ``get_market_data`` (batch) for close prices and ``get_stock_info``
-    (per stock) for shares outstanding.
-    """
-    cap_type = "流通市值" if use_float else "总市值"
-    share_field = "ActiveCapital" if use_float else "J_zgb"
-    logger.info("[sector] 正在计算 %d 只股票的%s...", len(codes), cap_type)
-
-    # Batch fetch close prices
-    data = tq.get_market_data(  # type: ignore[attr-defined]
-        field_list=["Close"],
-        stock_list=codes,
-        period="1d",
-        start_time="19900101",
-        count=1,
-        dividend_type="none",
-        fill_data=True,
-    )
-    close_df = data.get("Close")
-    if close_df is None or close_df.empty:
-        logger.warning("[sector] 收盘价数据为空，无法计算市值")
-        return [(code, 0.0) for code in codes]
-
-    last_row = close_df.iloc[-1]
-
-    # Per-stock fetch shares and calculate market cap
-    result: list[tuple[str, float]] = []
-    skipped = 0
-    for code in codes:
-        try:
-            price = float(last_row[code])
-        except (KeyError, ValueError, TypeError):
-            skipped += 1
-            continue
-
-        if price <= 0:
-            skipped += 1
-            continue
-
-        try:
-            info = tq.get_stock_info(  # type: ignore[attr-defined]
-                stock_code=code, field_list=[share_field]
-            )
-            shares_wan = float(info.get(share_field, 0))  # 万股
-        except Exception:
-            skipped += 1
-            continue
-
-        # 市值(亿) = 收盘价 × 总股本(万股) / 10000
-        mcap = price * shares_wan / 10000
-        result.append((code, mcap))
-
-    valid = len(result)
-    logger.info("[sector] 成功计算 %d/%d 只股票的%s", valid, len(codes), cap_type)
-    if skipped:
-        logger.info("[sector] 跳过 %d 只（价格异常或缺数据）", skipped)
-    logger.debug("[sector] 市值明细: %s", result)
-    return result

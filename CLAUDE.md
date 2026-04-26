@@ -92,7 +92,7 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 ### Algo 系统
 
 - **交易逻辑接口**：`set_algo()` 接受 `Callable[[ExecContext], None]`，支持类实例（实现 `__call__`）或裸函数
-- **AlgoConfig**：`src/stablemoney/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`、`hold_bars`），作为 Algo 构造函数的参数注入
+- **AlgoConfig**：`src/stablemoney/algos/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`、`hold_bars`），作为 Algo 构造函数的参数注入
 - **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`MACrossAlgo`、`MacdAlgo`、`KdjMacdMaAlgo`）
 - **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
 
@@ -106,7 +106,8 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 ### 日志系统
 
 - **模块**：`src/stablemoney/log.py`
-- **初始化**：`setup_logging(level="INFO", log_dir="logs")` 配置双输出：
+- **初始化**：`setup_logging(level="ERROR", log_dir="logs")` 配置双输出：
+  - `propagate = False`：阻止日志传播到 Python 根 logger，防止 PyBroker 的 `basicConfig()` 导致日志泄露到控制台
   - 控制台 Handler：仅 ERROR 级别
   - 文件 Handler：`logs/backtest_YYYYMMDD_HHMMSS.log`，级别由参数控制
 - **使用方式**：各模块通过 `logger = logging.getLogger(__name__)` 获取 logger，使用 `stablemoney` 命名空间

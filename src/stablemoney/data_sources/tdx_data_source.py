@@ -1,68 +1,47 @@
 """TDX (通达信) data source for PyBroker backtesting."""
 from __future__ import annotations
 
-import logging
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 from pybroker.data import DataSource
 from pybroker.scope import StaticScope
-
-logger = logging.getLogger(__name__)
-
-_TDX_DUMP_DIR = Path("tmp/tdx_debug")
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from stablemoney.indicator_def import IndicatorDef
+    import pandas as pd
 
-# Timeframe mapping: PyBroker -> TDX
-_TIMEFRAME_MAP: dict[str, str] = {
-    "1d": "1d",
-    "1w": "1w",
-    "1mon": "1mon",
-    "1h": "1h",
-    "30m": "30m",
-    "15m": "15m",
-    "5m": "5m",
-    "1m": "1m",
-}
+    from stablemoney.data_providers.data_provider import DataProvider
+    from stablemoney.indicator_def import IndicatorDef
 
 
 class TdxDataSource(DataSource):
     """TDX (通达信) data source for PyBroker.
 
-    Fetches market data via ``tq.get_market_data()`` and computes
-    indicators via the TDX formula engine (``formula_zb``).
+    Delegates data fetching to a ``DataProvider`` instance.
+    When ``data_provider`` is not given, creates a ``TdxDataProvider``
+    using ``tdx_dir`` (backward compatible).
 
-    Indicators are injected via the constructor::
+    Example::
 
-        ds = TdxDataSource(indicators=[RSI(14), MA(20)])
+        ds = TdxDataSource(indicators=[RSI(14), MA(20)], data_provider=provider)
     """
 
     def __init__(
         self,
         indicators: list[IndicatorDef] | None = None,
         tdx_dir: str | None = None,
+        data_provider: DataProvider | None = None,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         self._indicators: list[IndicatorDef] = indicators or []
-        self._init_tdx(tdx_dir)
+        if data_provider is not None:
+            self._data_provider = data_provider
+        else:
+            from stablemoney.data_providers.tdx_data_provider import TdxDataProvider
+
+            self._data_provider = TdxDataProvider(tdx_dir=tdx_dir)
         self._register_custom_columns()
-
-    @staticmethod
-    def _init_tdx(tdx_dir: str | None) -> None:
-        """Add tqcenter to sys.path and initialize TDX connection."""
-        if not tdx_dir:
-            return
-        if tdx_dir not in sys.path:
-            sys.path.insert(0, tdx_dir)
-        from tqcenter import tq
-
-        tq.initialize(__file__)
 
     def _register_custom_columns(self) -> None:
         """Register indicator column names as PyBroker custom columns."""
@@ -85,219 +64,12 @@ class TdxDataSource(DataSource):
     ) -> pd.DataFrame:
         """Called by PyBroker to fetch data.
 
-        For each stock: fetch K-line -> convert to DataFrame ->
-        compute indicators -> merge into per-stock DataFrame.
-        Then concatenate all stocks into one DataFrame.
+        Delegates entirely to the injected ``DataProvider``.
         """
-        from tqcenter import tq
-
-        period = self._map_timeframe(timeframe)
-        start_str = start_date.strftime("%Y%m%d")
-        end_str = end_date.strftime("%Y%m%d")
-
-        parts: list[pd.DataFrame] = []
-        for symbol in sorted(symbols):
-            logger.info("[TDX] 开始获取 %s 的 K 线数据", symbol)
-            # Fetch K-line data
-            kline_data = tq.get_market_data(
-                stock_list=[symbol],
-                period=period,
-                start_time=start_str,
-                end_time=end_str,
-                dividend_type="front",
-                fill_data=True,
-            )
-
-            # Convert to per-stock DataFrame
-            stock_df = self._convert_kline_to_dataframe(kline_data, symbol)
-            if stock_df.empty:
-                logger.debug("[TDX] %s: K线数据为空，跳过", symbol)
-                continue
-
-            logger.info(
-                "[TDX] %s: 获取到 %d 条 K 线, 日期范围 %s ~ %s",
-                symbol,
-                len(stock_df),
-                stock_df["date"].iloc[0],
-                stock_df["date"].iloc[-1],
-            )
-
-            # Log negative/zero close prices
-            bad_mask = stock_df["close"] <= 0
-            if bad_mask.any():
-                bad_prices = stock_df[bad_mask]
-                first_date = (
-                    bad_prices["date"].iloc[0]
-                    if "date" in bad_prices.columns
-                    else "N/A"
-                )
-                last_date = (
-                    bad_prices["date"].iloc[-1]
-                    if "date" in bad_prices.columns
-                    else "N/A"
-                )
-                logger.warning(
-                    "[TDX] %s: K线存在非正收盘价, 共 %d 条, "
-                    "最小值=%.4f, 日期范围=%s ~ %s, "
-                    "已导出到 %s",
-                    symbol,
-                    len(bad_prices),
-                    stock_df["close"].min(),
-                    first_date,
-                    last_date,
-                    _dump_stock_csv(symbol, stock_df, "bad_price"),
-                )
-
-            # Compute indicators and merge into stock_df
-            if self._indicators and "Close" in kline_data:
-                bar_count = len(kline_data["Close"][symbol])
-                formatted = tq.formula_format_data(kline_data)
-                stock_formatted = formatted.get(symbol, [])
-                fmt_len = len(stock_formatted)
-
-                # Log K-line vs formatted data length mismatch
-                if fmt_len != bar_count:
-                    logger.warning(
-                        "[TDX] %s: K线 bar_count=%d, formula_format_data=%d, "
-                        "差值=%d, 已导出到 %s",
-                        symbol, bar_count, fmt_len, bar_count - fmt_len,
-                        _dump_stock_csv(symbol, stock_df, "fmt_mismatch"),
-                    )
-
-                if stock_formatted:
-                    tq.formula_set_data(
-                        stock_code=symbol,
-                        stock_period=period,
-                        stock_data=stock_formatted,
-                        count=len(stock_formatted),
-                        dividend_type=1,
-                    )
-                    for ind_def in self._indicators:
-                        logger.info(
-                            "[TDX] %s: 计算指标 %s(%s)",
-                            symbol, ind_def.name, ind_def.formula_arg,
-                        )
-                        result = tq.formula_zb(
-                            formula_name=ind_def.name,
-                            formula_arg=ind_def.formula_arg,
-                        )
-                        # Log formula_zb return length vs bar_count
-                        if result and "Value" in result and result["Value"]:
-                            for out_name, vals in result["Value"].items():
-                                if vals is not None and len(vals) != bar_count:
-                                    logger.warning(
-                                        "[TDX] %s: formula_zb(%s) 输出 %s "
-                                        "返回 %d 值, K线 bar_count=%d, "
-                                        "差值=%d, 已导出到 %s",
-                                        symbol, ind_def.name, out_name,
-                                        len(vals), bar_count,
-                                        len(vals) - bar_count,
-                                        _dump_stock_csv(
-                                            symbol, stock_df,
-                                            f"zb_mismatch_{ind_def.name}",
-                                        ),
-                                    )
-                        self._merge_indicator_result(
-                            stock_df, result, ind_def, bar_count,
-                        )
-                        logger.debug(
-                            "[TDX] %s: 指标 %s 计算完成, 输出列=%s",
-                            symbol,
-                            ind_def.name,
-                            ind_def.column_names,
-                        )
-
-            parts.append(stock_df)
-
-        if not parts:
-            return pd.DataFrame(columns=["symbol", "date"])
-
-        df: pd.DataFrame = pd.concat(parts, ignore_index=True)
-        df = df.sort_values(by=["date", "symbol"]).reset_index(drop=True)
-        logger.info(
-            "[TDX] 数据获取完成: %d 条记录, %d 只股票",
-            len(df),
-            len(symbols),
+        return self._data_provider.fetch_stock_data(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            timeframe=timeframe,
+            indicators=self._indicators,
         )
-        logger.debug("[TDX] 最终 DataFrame:\n%s", df.to_string())
-        return df
-
-    @staticmethod
-    def _convert_kline_to_dataframe(
-        kline_data: dict[str, pd.DataFrame],
-        symbol: str,
-    ) -> pd.DataFrame:
-        """Convert single-stock TDX K-line data to PyBroker DataFrame."""
-        field_map = {
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        }
-
-        data: dict[str, Any] = {}
-        dates = None
-        for tdx_field, pb_col in field_map.items():
-            if tdx_field not in kline_data:
-                continue
-            series = kline_data[tdx_field][symbol]
-            data[pb_col] = series.values
-            if dates is None:
-                dates = series.index
-
-        if dates is None:
-            return pd.DataFrame(columns=["symbol", "date"])
-
-        data["date"] = dates
-        data["symbol"] = symbol
-        df: pd.DataFrame = pd.DataFrame(data)
-        return df
-
-    @staticmethod
-    def _merge_indicator_result(
-        df: pd.DataFrame,
-        result: dict[str, Any],
-        ind_def: IndicatorDef,
-        bar_count: int,
-    ) -> None:
-        """Merge formula_zb output into a per-stock DataFrame.
-
-        ``formula_zb`` returns ``{"Value": {"DIF": ["1.23", ...], ...}}``.
-        Values are strings and include warmup bars.
-        We take the last ``bar_count`` values to align with K-line data.
-        """
-        if not result or "Value" not in result:
-            return
-        value_dict: dict[str, list[str]] = result["Value"]
-
-        def to_float(v: str | None) -> float:
-            return float(v) if v is not None else float("nan")
-
-        if len(ind_def.outputs) == 1 and ind_def.outputs[0] == "value":
-            raw_values = next(iter(value_dict.values()), [])
-            col_name = ind_def.column_names[0]
-            df[col_name] = [to_float(v) for v in raw_values[-bar_count:]]
-        else:
-            for i, output_name in enumerate(ind_def.outputs):
-                raw_values = value_dict.get(output_name, [])
-                col_name = ind_def.column_names[i]
-                df[col_name] = [to_float(v) for v in raw_values[-bar_count:]]
-
-    @staticmethod
-    def _map_timeframe(timeframe: str | None) -> str:
-        """Map PyBroker timeframe to TDX period."""
-        return _TIMEFRAME_MAP.get(timeframe or "1d", "1d")
-
-
-def _dump_stock_csv(
-    symbol: str,
-    stock_df: pd.DataFrame,
-    tag: str,
-) -> Path:
-    """Dump stock DataFrame to CSV for TDX issue reporting."""
-    _TDX_DUMP_DIR.mkdir(parents=True, exist_ok=True)
-    safe_symbol = symbol.replace(".", "_")
-    path = _TDX_DUMP_DIR / f"{safe_symbol}_{tag}.csv"
-    stock_df.to_csv(path, index=False)
-    return path
