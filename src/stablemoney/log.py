@@ -6,7 +6,7 @@ Usage in example scripts::
     from stablemoney.log import setup_logging
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log-level", default="INFO",
+    parser.add_argument("--log-level", default="ERROR",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
     setup_logging(args.log_level)
@@ -41,6 +41,7 @@ def setup_logging(
 
     root_logger = logging.getLogger("stablemoney")
     root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    root_logger.propagate = False
 
     # Avoid duplicate handlers on repeated calls
     if root_logger.handlers:

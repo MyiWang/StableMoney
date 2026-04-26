@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from stablemoney.log import log_dataframe, setup_logging
 
@@ -17,6 +20,7 @@ def _reset_logging() -> None:
     root = logging.getLogger("stablemoney")
     root.handlers.clear()
     root.setLevel(logging.WARNING)
+    root.propagate = True
 
 
 class TestSetupLogging:
@@ -36,7 +40,8 @@ class TestSetupLogging:
         root = logging.getLogger("stablemoney")
         console_handlers = [
             h for h in root.handlers
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+            if isinstance(h, logging.StreamHandler)
+            and not isinstance(h, logging.FileHandler)
         ]
         assert len(console_handlers) == 1
 
@@ -45,7 +50,8 @@ class TestSetupLogging:
         root = logging.getLogger("stablemoney")
         console_handlers = [
             h for h in root.handlers
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+            if isinstance(h, logging.StreamHandler)
+            and not isinstance(h, logging.FileHandler)
         ]
         assert console_handlers[0].level == logging.ERROR
 
@@ -83,6 +89,27 @@ class TestSetupLogging:
         content = log_files[0].read_text(encoding="utf-8")
         assert "test message" in content
 
+    def test_propagate_disabled(self, tmp_path: Path) -> None:
+        setup_logging(log_dir=tmp_path)
+        root = logging.getLogger("stablemoney")
+        assert root.propagate is False
+
+    def test_info_not_propagated_to_root(self, tmp_path: Path) -> None:
+        setup_logging(level="INFO", log_dir=tmp_path)
+
+        root_records: list[str] = []
+        root_handler = logging.Handler()
+        root_handler.emit = lambda record: root_records.append(record.getMessage())  # type: ignore[method-assign]
+        root_handler.setLevel(logging.NOTSET)
+        logging.root.addHandler(root_handler)
+
+        child = logging.getLogger("stablemoney.strategy_builder")
+        child.info("should not reach root")
+
+        assert len(root_records) == 0
+
+        logging.root.removeHandler(root_handler)
+
 
 class TestLogDataframe:
     def test_debug_level_full_output(self) -> None:
@@ -91,7 +118,7 @@ class TestLogDataframe:
 
         records: list[str] = []
         handler = logging.Handler()
-        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[assignment]
+        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
         handler.setLevel(logging.DEBUG)
         test_logger.addHandler(handler)
 
@@ -108,7 +135,7 @@ class TestLogDataframe:
 
         records: list[str] = []
         handler = logging.Handler()
-        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[assignment]
+        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
         handler.setLevel(logging.INFO)
         test_logger.addHandler(handler)
 
@@ -125,7 +152,7 @@ class TestLogDataframe:
 
         records: list[str] = []
         handler = logging.Handler()
-        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[assignment]
+        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
         handler.setLevel(logging.INFO)
         test_logger.addHandler(handler)
 
@@ -139,7 +166,7 @@ class TestLogDataframe:
 
         records: list[str] = []
         handler = logging.Handler()
-        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[assignment]
+        handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
         handler.setLevel(logging.DEBUG)
         test_logger.addHandler(handler)
 
