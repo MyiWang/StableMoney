@@ -1,9 +1,11 @@
-"""BacktestConfig with serialization support."""
-
+"""BacktestConfig with YAML serialization support."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from stablemoney.indicator_def import IndicatorDef
 from stablemoney.market_sector import MarketSector, SectorFilter
@@ -30,8 +32,8 @@ class BacktestConfig:
     sector: MarketSector | None = None
     sector_filter: SectorFilter | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict."""
+    def _serialize(self) -> dict[str, Any]:
+        """Convert to a plain dict for YAML serialization."""
         result: dict[str, Any] = {
             "symbols": list(self.symbols),
             "start_date": self.start_date,
@@ -47,8 +49,16 @@ class BacktestConfig:
                 }
                 for ind in self.indicators
             ],
-            **({"warmup": self.warmup} if self.warmup is not None else {}),
-            **({"sector": self.sector.value} if self.sector is not None else {}),
+            **(
+                {"warmup": self.warmup}
+                if self.warmup is not None
+                else {}
+            ),
+            **(
+                {"sector": self.sector.value}
+                if self.sector is not None
+                else {}
+            ),
             **(
                 {
                     "sector_filter": {
@@ -66,8 +76,8 @@ class BacktestConfig:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> BacktestConfig:
-        """Deserialize from a plain dict."""
+    def _deserialize(cls, data: dict[str, Any]) -> BacktestConfig:
+        """Construct from a plain dict (YAML-loaded)."""
         indicators: list[IndicatorDef] = []
         for ind_data in data.get("indicators", []):
             outputs = ind_data.get("outputs", ("value",))
@@ -108,3 +118,26 @@ class BacktestConfig:
             sector=sector,
             sector_filter=sector_filter,
         )
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> BacktestConfig:
+        """Load from a YAML file."""
+        path = Path(path)
+        with path.open(encoding="utf-8") as f:
+            data: dict[str, Any] = yaml.safe_load(f)
+
+        backtest_data = data.get("backtest", {})
+        return cls._deserialize(backtest_data)
+
+    def save(self, path: str | Path) -> None:
+        """Save to a YAML file."""
+        path = Path(path)
+        data = {"backtest": self._serialize()}
+        with path.open("w", encoding="utf-8") as f:
+            yaml.dump(
+                data,
+                f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+            )

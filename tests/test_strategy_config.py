@@ -1,11 +1,13 @@
-"""Tests for BacktestConfig serialization."""
+"""Tests for BacktestConfig and YAML serialization."""
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 from stablemoney.strategy_config import BacktestConfig
 from stablemoney.market_sector import MarketSector, SectorFilter
@@ -14,14 +16,34 @@ if TYPE_CHECKING:
     from stablemoney.indicator_def import IndicatorDef
 
 
-class TestToDict:
+# ---------------------------------------------------------------------------
+# BacktestConfig dataclass
+# ---------------------------------------------------------------------------
+
+
+def test_frozen() -> None:
+    cfg = BacktestConfig(
+        symbols=["600519.SH"],
+        start_date="2024-01-01",
+        end_date="2024-12-31",
+    )
+    with pytest.raises(FrozenInstanceError):
+        cfg.symbols = []  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
+
+class TestSerialize:
     def test_minimal(self) -> None:
         cfg = BacktestConfig(
             symbols=["600519.SH"],
             start_date="2024-01-01",
             end_date="2024-12-31",
         )
-        d = cfg.to_dict()
+        d = cfg._serialize()
         assert d["symbols"] == ["600519.SH"]
         assert d["start_date"] == "2024-01-01"
         assert d["end_date"] == "2024-12-31"
@@ -40,7 +62,7 @@ class TestToDict:
             end_date="2024-12-31",
             indicators=[simple_indicator, multi_indicator],
         )
-        d = cfg.to_dict()
+        d = cfg._serialize()
         assert len(d["indicators"]) == 2
         assert d["indicators"][0] == {
             "name": "RSI",
@@ -55,7 +77,7 @@ class TestToDict:
             end_date="2024-12-31",
             warmup=50,
         )
-        assert cfg.to_dict()["warmup"] == 50
+        assert cfg._serialize()["warmup"] == 50
 
     def test_without_warmup(self) -> None:
         cfg = BacktestConfig(
@@ -64,7 +86,7 @@ class TestToDict:
             end_date="2024-12-31",
             warmup=None,
         )
-        assert "warmup" not in cfg.to_dict()
+        assert "warmup" not in cfg._serialize()
 
     def test_with_sector(self) -> None:
         cfg = BacktestConfig(
@@ -72,7 +94,7 @@ class TestToDict:
             end_date="2024-12-31",
             sector=MarketSector.CHINEXT,
         )
-        d = cfg.to_dict()
+        d = cfg._serialize()
         assert d["sector"] == "51"
 
     def test_without_sector(self) -> None:
@@ -81,7 +103,7 @@ class TestToDict:
             start_date="2024-01-01",
             end_date="2024-12-31",
         )
-        assert "sector" not in cfg.to_dict()
+        assert "sector" not in cfg._serialize()
 
     def test_with_sector_filter(self) -> None:
         cfg = BacktestConfig(
@@ -93,7 +115,7 @@ class TestToDict:
                 min_market_cap=10.0, max_market_cap=100.0,
             ),
         )
-        d = cfg.to_dict()
+        d = cfg._serialize()
         assert d["sector_filter"] == {
             "max_stocks": 50,
             "sort_by": "market_cap",
@@ -108,12 +130,12 @@ class TestToDict:
             start_date="2024-01-01",
             end_date="2024-12-31",
         )
-        assert "sector_filter" not in cfg.to_dict()
+        assert "sector_filter" not in cfg._serialize()
 
 
-class TestFromDict:
+class TestDeserialize:
     def test_minimal(self) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "symbols": ["600519.SH"],
                 "start_date": "2024-01-01",
@@ -127,7 +149,7 @@ class TestFromDict:
         assert cfg.warmup is None
 
     def test_all_fields(self, simple_indicator: IndicatorDef) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "symbols": ["600519.SH"],
                 "start_date": "2024-01-01",
@@ -147,7 +169,7 @@ class TestFromDict:
         assert cfg.indicators[0].name == "RSI"
 
     def test_outputs_as_list(self) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "symbols": ["600519.SH"],
                 "start_date": "2024-01-01",
@@ -160,7 +182,7 @@ class TestFromDict:
         assert cfg.indicators[0].outputs == ("K", "D", "J")
 
     def test_outputs_missing_defaults_to_value(self) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "symbols": ["600519.SH"],
                 "start_date": "2024-01-01",
@@ -171,7 +193,7 @@ class TestFromDict:
         assert cfg.indicators[0].outputs == ("value",)
 
     def test_with_sector(self) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "start_date": "2024-01-01",
                 "end_date": "2024-12-31",
@@ -182,7 +204,7 @@ class TestFromDict:
         assert cfg.symbols == []
 
     def test_with_sector_filter(self) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "start_date": "2024-01-01",
                 "end_date": "2024-12-31",
@@ -201,7 +223,7 @@ class TestFromDict:
         assert cfg.sector_filter.sort_ascending is False
 
     def test_without_sector(self) -> None:
-        cfg = BacktestConfig.from_dict(
+        cfg = BacktestConfig._deserialize(
             {
                 "symbols": ["600519.SH"],
                 "start_date": "2024-01-01",
@@ -213,7 +235,7 @@ class TestFromDict:
 
 
 class TestRoundtrip:
-    def test_to_dict_from_dict(
+    def test_full_roundtrip(
         self,
         simple_indicator: IndicatorDef,
         multi_indicator: IndicatorDef,
@@ -225,7 +247,7 @@ class TestRoundtrip:
             initial_cash=500_000,
             indicators=[simple_indicator, multi_indicator],
         )
-        restored = BacktestConfig.from_dict(original.to_dict())
+        restored = BacktestConfig._deserialize(original._serialize())
         assert restored == original
 
     def test_preserves_warmup(self) -> None:
@@ -235,7 +257,7 @@ class TestRoundtrip:
             end_date="2024-12-31",
             warmup=100,
         )
-        restored = BacktestConfig.from_dict(original.to_dict())
+        restored = BacktestConfig._deserialize(original._serialize())
         assert restored.warmup == 100
 
     def test_preserves_sector(self) -> None:
@@ -245,18 +267,96 @@ class TestRoundtrip:
             sector=MarketSector.CHINEXT,
             sector_filter=SectorFilter(max_stocks=20, sort_by="float_cap"),
         )
-        restored = BacktestConfig.from_dict(original.to_dict())
+        restored = BacktestConfig._deserialize(original._serialize())
         assert restored.sector is MarketSector.CHINEXT
         assert restored.sector_filter is not None
         assert restored.sector_filter.max_stocks == 20
         assert restored.sector_filter.sort_by == "float_cap"
 
 
-def test_frozen() -> None:
+# ---------------------------------------------------------------------------
+# YAML file I/O (from_yaml / save)
+# ---------------------------------------------------------------------------
+
+
+def _make_config(indicators: list[IndicatorDef] | None = None) -> BacktestConfig:
+    return BacktestConfig(
+        symbols=["600519.SH"],
+        start_date="2024-01-01",
+        end_date="2024-12-31",
+        indicators=indicators or [],
+    )
+
+
+def test_save_and_load_roundtrip(
+    tmp_path: Path,
+    simple_indicator: IndicatorDef,
+) -> None:
+    original = BacktestConfig(
+        symbols=["600519.SH", "000858.SZ"],
+        start_date="2024-01-01",
+        end_date="2024-12-31",
+        initial_cash=500_000,
+        indicators=[simple_indicator],
+        warmup=100,
+    )
+    path = tmp_path / "config.yaml"
+    original.save(path)
+    loaded = BacktestConfig.from_yaml(path)
+    assert loaded == original
+
+
+def test_save_creates_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    _make_config().save(path)
+    assert path.exists()
+
+
+def test_save_yaml_structure(
+    tmp_path: Path,
+    simple_indicator: IndicatorDef,
+) -> None:
+    path = tmp_path / "config.yaml"
+    BacktestConfig(
+        symbols=["600519.SH"],
+        start_date="2024-01-01",
+        end_date="2024-12-31",
+        indicators=[simple_indicator],
+    ).save(path)
+    with path.open(encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    assert "backtest" in raw
+    assert "indicators" in raw["backtest"]
+    assert len(raw["backtest"]["indicators"]) == 1
+
+
+def test_load_from_string_path(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    _make_config().save(path)
+    loaded = BacktestConfig.from_yaml(str(path))
+    assert loaded.symbols == ["600519.SH"]
+
+
+def test_load_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        BacktestConfig.from_yaml(tmp_path / "nonexistent.yaml")
+
+
+def test_empty_indicators(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    _make_config(indicators=[]).save(path)
+    loaded = BacktestConfig.from_yaml(path)
+    assert loaded.indicators == []
+
+
+def test_save_with_warmup(tmp_path: Path) -> None:
     cfg = BacktestConfig(
         symbols=["600519.SH"],
         start_date="2024-01-01",
         end_date="2024-12-31",
+        warmup=50,
     )
-    with pytest.raises(FrozenInstanceError):
-        cfg.symbols = []  # type: ignore[misc]
+    path = tmp_path / "config.yaml"
+    cfg.save(path)
+    loaded = BacktestConfig.from_yaml(path)
+    assert loaded.warmup == 50

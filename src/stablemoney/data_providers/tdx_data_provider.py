@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from stablemoney.data_providers.data_provider import DataProvider
+from stablemoney.log import dump_stock_csv
+from stablemoney.stock_info import StockInfo
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -17,8 +18,6 @@ if TYPE_CHECKING:
     from stablemoney.market_sector import MarketSector, SectorFilter
 
 logger = logging.getLogger(__name__)
-
-_TDX_DUMP_DIR = Path("tmp/tdx_debug")
 
 _TIMEFRAME_MAP: dict[str, str] = {
     "1d": "1d",
@@ -32,35 +31,18 @@ _TIMEFRAME_MAP: dict[str, str] = {
 }
 
 
-def _dump_stock_csv(
-    symbol: str,
-    stock_df: pd.DataFrame,
-    tag: str,
-) -> Path:
-    """Dump stock DataFrame to CSV for TDX issue reporting."""
-    _TDX_DUMP_DIR.mkdir(parents=True, exist_ok=True)
-    safe_symbol = symbol.replace(".", "_")
-    path = _TDX_DUMP_DIR / f"{safe_symbol}_{tag}.csv"
-    stock_df.to_csv(path, index=False)
-    return path
-
-
 class TdxDataProvider(DataProvider):
     """TDX implementation of DataProvider.
 
-    Three-layer architecture:
+    Two-layer architecture:
 
-    - Bottom layer (``_raw_*``): 1:1 wrappers around ``tq.*`` calls
-    - Middle layer (``_convert_*``, ``_merge_*``): data transformation
-    - Top layer (``fetch_stock_data``, ``resolve_sector``): business methods
+    - Data conversion (``_convert_*``, ``_merge_*``): transform TDX data
+    - Business methods (``fetch_stock_data``, ``resolve_sector``):
+      DataProvider interface
     """
 
     def __init__(self, tdx_dir: str | None = None) -> None:
-        self._tq: Any = self._init_tdx(tdx_dir)
-
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
+        self.tq: Any = self._init_tdx(tdx_dir)
 
     @staticmethod
     def _init_tdx(tdx_dir: str | None) -> Any:
@@ -74,53 +56,8 @@ class TdxDataProvider(DataProvider):
         tq.initialize(__file__)
         return tq
 
-    @property
-    def tq(self) -> Any:
-        """Lazy tq accessor -- imports on first use if not initialized."""
-        if self._tq is None:
-            from tqcenter import tq
-
-            self._tq = tq
-        return self._tq
-
     # ------------------------------------------------------------------
-    # Bottom layer: raw TDX API wrappers
-    # ------------------------------------------------------------------
-
-    def _raw_get_market_data(self, **kwargs: Any) -> dict[str, pd.DataFrame]:
-        return dict(self.tq.get_market_data(**kwargs))
-
-    def _raw_get_stock_list(self, market: str) -> list[str]:
-        return list(self.tq.get_stock_list(market=market))
-
-    def _raw_get_stock_info(
-        self, stock_code: str, field_list: list[str]
-    ) -> dict[str, Any]:
-        return dict(
-            self.tq.get_stock_info(
-                stock_code=stock_code, field_list=field_list
-            )
-        )
-
-    def _raw_formula_format_data(
-        self, kline_data: dict[str, pd.DataFrame]
-    ) -> dict[str, list[Any]]:
-        return dict(self.tq.formula_format_data(kline_data))
-
-    def _raw_formula_set_data(self, **kwargs: Any) -> None:
-        self.tq.formula_set_data(**kwargs)
-
-    def _raw_formula_zb(
-        self, formula_name: str, formula_arg: str
-    ) -> dict[str, Any]:
-        return dict(
-            self.tq.formula_zb(
-                formula_name=formula_name, formula_arg=formula_arg
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Middle layer: data conversion
+    # Data conversion
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -190,13 +127,13 @@ class TdxDataProvider(DataProvider):
         codes: list[str],
         *,
         use_float: bool = False,
-    ) -> list[tuple[str, float]]:
+    ) -> list[StockInfo]:
         """Calculate real market cap (亿元) for each stock."""
         cap_type = "流通市值" if use_float else "总市值"
         share_field = "ActiveCapital" if use_float else "J_zgb"
         logger.info("[sector] 正在计算 %d 只股票的%s...", len(codes), cap_type)
 
-        data = self._raw_get_market_data(
+        data = dict(self.tq.get_market_data(
             field_list=["Close"],
             stock_list=codes,
             period="1d",
@@ -204,22 +141,25 @@ class TdxDataProvider(DataProvider):
             count=1,
             dividend_type="none",
             fill_data=True,
-        )
+        ))
         close_df = data.get("Close")
         if close_df is None or close_df.empty:
             logger.warning("[sector] 收盘价数据为空，无法计算市值")
-            return [(code, 0.0) for code in codes]
+            return [
+                StockInfo(code=c, close_price=0.0, shares_wan=0.0, market_cap_yi=0.0)
+                for c in codes
+            ]
 
         last_row = close_df.iloc[-1]
 
-        result: list[tuple[str, float]] = []
+        result: list[StockInfo] = []
         skipped = 0
         for code in codes:
             try:
                 price = float(last_row[code])
-                info = self._raw_get_stock_info(
+                info = dict(self.tq.get_stock_info(
                     stock_code=code, field_list=[share_field]
-                )
+                ))
                 shares_wan = float(info.get(share_field, 0))
             except Exception as e:
                 logger.debug("[sector] %s: 跳过，原因: %s", code, e)
@@ -228,7 +168,12 @@ class TdxDataProvider(DataProvider):
                 continue
 
             mcap = price * shares_wan / 10000
-            result.append((code, mcap))
+            result.append(StockInfo(
+                code=code,
+                close_price=price,
+                shares_wan=shares_wan,
+                market_cap_yi=mcap,
+            ))
 
         valid = len(result)
         logger.info("[sector] 成功计算 %d/%d 只股票的%s", valid, len(codes), cap_type)
@@ -238,7 +183,7 @@ class TdxDataProvider(DataProvider):
         return result
 
     # ------------------------------------------------------------------
-    # Top layer: business methods (DataProvider interface)
+    # Business methods (DataProvider interface)
     # ------------------------------------------------------------------
 
     def fetch_stock_data(
@@ -257,14 +202,14 @@ class TdxDataProvider(DataProvider):
         parts: list[pd.DataFrame] = []
         for symbol in sorted(symbols):
             logger.info("[TDX] 开始获取 %s 的 K 线数据", symbol)
-            kline_data = self._raw_get_market_data(
+            kline_data = dict(self.tq.get_market_data(
                 stock_list=[symbol],
                 period=period,
                 start_time=start_str,
                 end_time=end_str,
                 dividend_type="front",
                 fill_data=True,
-            )
+            ))
 
             stock_df = self._convert_kline_to_dataframe(kline_data, symbol)
             if stock_df.empty:
@@ -301,13 +246,13 @@ class TdxDataProvider(DataProvider):
                     stock_df["close"].min(),
                     first_date,
                     last_date,
-                    _dump_stock_csv(symbol, stock_df, "bad_price"),
+                    dump_stock_csv(stock_df, symbol, "bad_price"),
                 )
                 continue
 
             if indicators and "Close" in kline_data:
                 bar_count = len(kline_data["Close"][symbol])
-                formatted = self._raw_formula_format_data(kline_data)
+                formatted = dict(self.tq.formula_format_data(kline_data))
                 stock_formatted = formatted.get(symbol, [])
                 fmt_len = len(stock_formatted)
 
@@ -319,11 +264,11 @@ class TdxDataProvider(DataProvider):
                         bar_count,
                         fmt_len,
                         bar_count - fmt_len,
-                        _dump_stock_csv(symbol, stock_df, "fmt_mismatch"),
+                        dump_stock_csv(stock_df, symbol, "fmt_mismatch"),
                     )
 
                 if stock_formatted:
-                    self._raw_formula_set_data(
+                    self.tq.formula_set_data(
                         stock_code=symbol,
                         stock_period=period,
                         stock_data=stock_formatted,
@@ -337,10 +282,10 @@ class TdxDataProvider(DataProvider):
                             ind_def.name,
                             ind_def.formula_arg,
                         )
-                        result = self._raw_formula_zb(
+                        result = dict(self.tq.formula_zb(
                             formula_name=ind_def.name,
                             formula_arg=ind_def.formula_arg,
-                        )
+                        ))
                         if result and "Value" in result and result["Value"]:
                             for out_name, vals in result["Value"].items():
                                 if vals is not None and len(vals) != bar_count:
@@ -354,9 +299,9 @@ class TdxDataProvider(DataProvider):
                                         len(vals),
                                         bar_count,
                                         len(vals) - bar_count,
-                                        _dump_stock_csv(
-                                            symbol,
+                                        dump_stock_csv(
                                             stock_df,
+                                            symbol,
                                             f"zb_mismatch_{ind_def.name}",
                                         ),
                                     )
@@ -382,7 +327,6 @@ class TdxDataProvider(DataProvider):
             len(df),
             len(symbols),
         )
-        logger.debug("[TDX] 最终 DataFrame:\n%s", df.to_string())
         return df
 
     def resolve_sector(
@@ -391,7 +335,7 @@ class TdxDataProvider(DataProvider):
         sector_filter: SectorFilter | None = None,
     ) -> list[str]:
         """Resolve sector to stock codes with optional filtering."""
-        codes: list[str] = self._raw_get_stock_list(market=sector.value)
+        codes: list[str] = list(self.tq.get_stock_list(market=sector.value))
         if not codes:
             return []
 
@@ -405,30 +349,36 @@ class TdxDataProvider(DataProvider):
             use_float = sector_filter.sort_by == "float_cap"
             stock_data = self._fetch_market_cap(codes, use_float=use_float)
             before = len(stock_data)
-            stock_data = [(c, v) for c, v in stock_data if v == v]  # filter NaN
+            stock_data = [
+                s for s in stock_data if s.market_cap_yi == s.market_cap_yi
+            ]
             if dropped := before - len(stock_data):
                 logger.info("[sector] 过滤掉 %d 只市值为 NaN 的股票", dropped)
             stock_data.sort(
-                key=lambda x: x[1], reverse=not sector_filter.sort_ascending
+                key=lambda s: s.market_cap_yi,
+                reverse=not sector_filter.sort_ascending,
             )
         else:
-            stock_data = [(code, 0.0) for code in codes]
+            stock_data = [
+                StockInfo(code=c, close_price=0.0, shares_wan=0.0, market_cap_yi=0.0)
+                for c in codes
+            ]
 
         has_min = sector_filter.min_market_cap is not None
         has_max = sector_filter.max_market_cap is not None
         if has_min or has_max:
-            filtered: list[tuple[str, float]] = []
-            for code, val in stock_data:
-                if has_min and val < sector_filter.min_market_cap:  # type: ignore[operator]
+            filtered: list[StockInfo] = []
+            for s in stock_data:
+                if has_min and s.market_cap_yi < sector_filter.min_market_cap:  # type: ignore[operator]
                     continue
-                if has_max and val > sector_filter.max_market_cap:  # type: ignore[operator]
+                if has_max and s.market_cap_yi > sector_filter.max_market_cap:  # type: ignore[operator]
                     continue
-                filtered.append((code, val))
+                filtered.append(s)
             stock_data = filtered
             logger.info("[sector] 市值区间过滤后剩余 %d 只股票", len(stock_data))
             logger.debug("[sector] 过滤后股票: %s", stock_data)
 
-        result = [code for code, _ in stock_data]
+        result = [s.code for s in stock_data]
 
         if sector_filter.max_stocks:
             result = result[: sector_filter.max_stocks]

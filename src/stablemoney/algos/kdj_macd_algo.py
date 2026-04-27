@@ -17,39 +17,42 @@ _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
 class KDJMacdAlgo:
-    """KDJ golden/death cross with MACD trend filter.
+    """KDJ oversold dip + MACD bullish + MA trend filter.
 
-    Buy: KDJ golden cross (K crosses above D) and MACD DIF > 0 and DEA > 0
-    Sell: KDJ death cross (K crosses below D)
-    Risk exits: stop loss, take profit, or max hold bars
+    Buy: J[-2] < 0 and J[-1] < J[-2] and DIF > 0 and DEA > 0
+         and close > MA60 and close < MA20
+    Sell: no active signal — exits via stop loss, take profit, or max hold bars
     """
 
     def __init__(self, config: AlgoConfig = _DEFAULT_ALGO_CONFIG) -> None:
         self.config = config
 
     def __call__(self, ctx: ExecContext) -> None:
-        kdj_k = ctx.KDJ_K
-        kdj_d = ctx.KDJ_D
+        kdj_j = ctx.KDJ_J
         macd_dif = ctx.MACD_DIF
         macd_dea = ctx.MACD_DEA
+        ma_20 = ctx.MA_20
+        ma_60 = ctx.MA_60
 
         if (
-            np.isnan(kdj_k[-1])
-            or np.isnan(kdj_d[-1])
+            np.isnan(kdj_j[-1])
             or np.isnan(macd_dif[-1])
             or np.isnan(macd_dea[-1])
+            or np.isnan(ma_20[-1])
+            or np.isnan(ma_60[-1])
         ):
             return
 
         pos = ctx.long_pos()
 
-        # Buy: KDJ golden cross + MACD DIF > 0 and DEA > 0
         if (
             pos is None
-            and kdj_k[-2] < kdj_d[-2]
-            and kdj_k[-1] > kdj_d[-1]
+            and kdj_j[-2] < 0
+            and kdj_j[-1] < kdj_j[-2]
             and macd_dif[-1] > 0
             and macd_dea[-1] > 0
+            and ctx.close[-1] > ma_60[-1]
+            and ctx.close[-1] < ma_20[-1]
         ):
             shares = int(ctx.config.initial_cash / ctx.close[-1])
             ctx.buy_shares = max(shares, 100)
@@ -60,29 +63,16 @@ class KDJMacdAlgo:
             if self.config.hold_bars > 0:
                 ctx.hold_bars = self.config.hold_bars
             logger.info(
-                "KDJ金叉买入 %s: date=%s K=%.2f D=%.2f "
-                "DIF=%.4f DEA=%.4f shares=%d",
+                "KDJ超卖买入 %s: date=%s J=%.2f "
+                "DIF=%.4f DEA=%.4f close=%.2f "
+                "MA20=%.2f MA60=%.2f shares=%d",
                 ctx.symbol,
                 ctx.date[-1],
-                kdj_k[-1],
-                kdj_d[-1],
+                kdj_j[-1],
                 macd_dif[-1],
                 macd_dea[-1],
+                ctx.close[-1],
+                ma_20[-1],
+                ma_60[-1],
                 ctx.buy_shares,
-            )
-            return
-
-        # Sell: KDJ death cross
-        if (
-            pos is not None
-            and kdj_k[-2] > kdj_d[-2]
-            and kdj_k[-1] < kdj_d[-1]
-        ):
-            ctx.sell_all_shares()  # type: ignore[no-untyped-call]
-            logger.info(
-                "KDJ死叉卖出 %s: date=%s, K=%.2f, D=%.2f",
-                ctx.symbol,
-                ctx.date[-1],
-                kdj_k[-1],
-                kdj_d[-1],
             )

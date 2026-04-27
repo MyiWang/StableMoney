@@ -17,7 +17,7 @@ from stablemoney.data_providers.tdx_data_provider import TdxDataProvider
 
 
 # ---------------------------------------------------------------------------
-# Static method tests (middle layer, pure logic)
+# Static method tests (data conversion, pure logic)
 # ---------------------------------------------------------------------------
 
 
@@ -171,11 +171,11 @@ class TestInit:
         ):
             provider = TdxDataProvider(tdx_dir="/some/path")
             mock_tq.initialize.assert_called_once()
-            assert provider._tq is mock_tq
+            assert provider.tq is mock_tq
 
-    def test_no_tdx_dir_defers_import(self) -> None:
+    def test_no_tdx_dir_sets_none(self) -> None:
         provider = TdxDataProvider(tdx_dir=None)
-        assert provider._tq is None
+        assert provider.tq is None
 
     @patch("sys.path")
     def test_tdx_dir_adds_to_sys_path(self, mock_sys_path: MagicMock) -> None:
@@ -189,7 +189,7 @@ class TestInit:
 
 
 # ---------------------------------------------------------------------------
-# fetch_stock_data tests (top layer, mocking bottom layer)
+# fetch_stock_data tests
 # ---------------------------------------------------------------------------
 
 
@@ -207,18 +207,19 @@ class TestFetchStockData:
         }
 
     def test_single_stock_no_indicators(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
         kline = self._make_kline("600519.SH")
+        mock_tq.get_market_data.return_value = kline
 
-        with patch.object(provider, "_raw_get_market_data", return_value=kline):
-            result = provider.fetch_stock_data(
-                symbols=frozenset(["600519.SH"]),
-                start_date=datetime(2024, 1, 1),
-                end_date=datetime(2024, 1, 31),
-                timeframe="1d",
-                indicators=[],
-            )
+        result = provider.fetch_stock_data(
+            symbols=frozenset(["600519.SH"]),
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 1, 31),
+            timeframe="1d",
+            indicators=[],
+        )
 
         assert len(result) == 3
         assert "symbol" in result.columns
@@ -226,8 +227,9 @@ class TestFetchStockData:
         assert result["symbol"].iloc[0] == "600519.SH"
 
     def test_single_stock_with_indicators(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
         symbol = "600519.SH"
         kline = self._make_kline(symbol, n=3)
 
@@ -235,60 +237,54 @@ class TestFetchStockData:
         zb_result = {"Value": {"value": ["1.0", "2.0", "3.0"]}}
         ind_def = IndicatorDef("RSI", {"period": 14})
 
-        with (
-            patch.object(provider, "_raw_get_market_data", return_value=kline),
-            patch.object(provider, "_raw_formula_format_data", return_value=formatted),
-            patch.object(provider, "_raw_formula_set_data"),
-            patch.object(provider, "_raw_formula_zb", return_value=zb_result),
-        ):
-            result = provider.fetch_stock_data(
-                symbols=frozenset([symbol]),
-                start_date=datetime(2024, 1, 1),
-                end_date=datetime(2024, 1, 31),
-                timeframe="1d",
-                indicators=[ind_def],
-            )
+        mock_tq.get_market_data.return_value = kline
+        mock_tq.formula_format_data.return_value = formatted
+        mock_tq.formula_zb.return_value = zb_result
+
+        result = provider.fetch_stock_data(
+            symbols=frozenset([symbol]),
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 1, 31),
+            timeframe="1d",
+            indicators=[ind_def],
+        )
 
         assert "RSI_14" in result.columns
         assert len(result) == 3
 
     def test_empty_kline_returns_empty_df(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
+        mock_tq.get_market_data.return_value = {}
 
-        with patch.object(provider, "_raw_get_market_data", return_value={}):
-            result = provider.fetch_stock_data(
-                symbols=frozenset(["600519.SH"]),
-                start_date=datetime(2024, 1, 1),
-                end_date=datetime(2024, 1, 31),
-                timeframe="1d",
-                indicators=[],
-            )
+        result = provider.fetch_stock_data(
+            symbols=frozenset(["600519.SH"]),
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 1, 31),
+            timeframe="1d",
+            indicators=[],
+        )
 
         assert result.empty
         assert "symbol" in result.columns
         assert "date" in result.columns
 
     def test_multiple_stocks_concatenated(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
         kline_a = self._make_kline("A.SH", n=2)
         kline_b = self._make_kline("B.SZ", n=2)
+        mock_tq.get_market_data.side_effect = [kline_a, kline_b]
 
-        with (
-            patch.object(
-                provider,
-                "_raw_get_market_data",
-                side_effect=[kline_a, kline_b],
-            ),
-        ):
-            result = provider.fetch_stock_data(
-                symbols=frozenset(["B.SZ", "A.SH"]),
-                start_date=datetime(2024, 1, 1),
-                end_date=datetime(2024, 1, 31),
-                timeframe="1d",
-                indicators=[],
-            )
+        result = provider.fetch_stock_data(
+            symbols=frozenset(["B.SZ", "A.SH"]),
+            start_date=datetime(2024, 1, 1),
+            end_date=datetime(2024, 1, 31),
+            timeframe="1d",
+            indicators=[],
+        )
 
         assert len(result) == 4
         symbols_in_result = set(result["symbol"].unique())
@@ -296,217 +292,158 @@ class TestFetchStockData:
 
 
 # ---------------------------------------------------------------------------
-# resolve_sector tests (top layer, mocking bottom layer)
+# resolve_sector tests
 # ---------------------------------------------------------------------------
 
 
 class TestResolveSector:
     def test_returns_all_codes(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
+        mock_tq.get_stock_list.return_value = ["300001.SZ", "300002.SZ", "300003.SZ"]
 
-        with (
-            patch.object(
-                provider,
-                "_raw_get_stock_list",
-                return_value=["300001.SZ", "300002.SZ", "300003.SZ"],
-            ),
-        ):
-            result = provider.resolve_sector(MarketSector.CHINEXT, None)
+        result = provider.resolve_sector(MarketSector.CHINEXT, None)
 
         assert result == ["300001.SZ", "300002.SZ", "300003.SZ"]
 
     def test_max_stocks_without_sort(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
+        mock_tq.get_stock_list.return_value = [
+            "300001.SZ", "300002.SZ", "300003.SZ", "300004.SZ"
+        ]
 
-        with (
-            patch.object(
-                provider,
-                "_raw_get_stock_list",
-                return_value=["300001.SZ", "300002.SZ", "300003.SZ", "300004.SZ"],
-            ),
-        ):
-            sf = SectorFilter(max_stocks=2)
-            result = provider.resolve_sector(MarketSector.CHINEXT, sf)
+        sf = SectorFilter(max_stocks=2)
+        result = provider.resolve_sector(MarketSector.CHINEXT, sf)
 
         assert result == ["300001.SZ", "300002.SZ"]
 
     def test_sort_and_limit(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
 
         close_df = pd.DataFrame(
             {"A.SH": [10.0], "B.SZ": [5.0], "C.SH": [20.0]},
             index=pd.DatetimeIndex(["2025-01-01"]),
         )
-        kline_result = {"Close": close_df}
+        mock_tq.get_stock_list.return_value = ["A.SH", "B.SZ", "C.SH"]
+        mock_tq.get_market_data.return_value = {"Close": close_df}
+        mock_tq.get_stock_info.side_effect = [
+            {"J_zgb": "30000"}, {"J_zgb": "10000"}, {"J_zgb": "5000"}
+        ]
 
-        with (
-            patch.object(
-                provider, "_raw_get_stock_list", return_value=["A.SH", "B.SZ", "C.SH"]
-            ),
-            patch.object(
-                provider, "_raw_get_market_data", return_value=kline_result
-            ),
-            patch.object(
-                provider,
-                "_raw_get_stock_info",
-                side_effect=[{"J_zgb": "30000"}, {"J_zgb": "10000"}, {"J_zgb": "5000"}],
-            ),
-        ):
-            sf = SectorFilter(max_stocks=2, sort_by="market_cap", sort_ascending=False)
-            result = provider.resolve_sector(MarketSector.ALL, sf)
+        sf = SectorFilter(max_stocks=2, sort_by="market_cap", sort_ascending=False)
+        result = provider.resolve_sector(MarketSector.ALL, sf)
 
         # A=30亿, B=5亿, C=10亿, sorted desc: A, C, B, top 2: A, C
         assert result == ["A.SH", "C.SH"]
 
     def test_sort_ascending(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
 
         close_df = pd.DataFrame(
             {"A.SH": [10.0], "B.SZ": [5.0]},
             index=pd.DatetimeIndex(["2025-01-01"]),
         )
+        mock_tq.get_stock_list.return_value = ["A.SH", "B.SZ"]
+        mock_tq.get_market_data.return_value = {"Close": close_df}
+        mock_tq.get_stock_info.side_effect = [
+            {"J_zgb": "30000"}, {"J_zgb": "10000"}
+        ]
 
-        with (
-            patch.object(
-                provider, "_raw_get_stock_list", return_value=["A.SH", "B.SZ"]
-            ),
-            patch.object(
-                provider,
-                "_raw_get_market_data",
-                return_value={"Close": close_df},
-            ),
-            patch.object(
-                provider,
-                "_raw_get_stock_info",
-                side_effect=[{"J_zgb": "30000"}, {"J_zgb": "10000"}],
-            ),
-        ):
-            sf = SectorFilter(sort_by="market_cap", sort_ascending=True)
-            result = provider.resolve_sector(MarketSector.ALL, sf)
+        sf = SectorFilter(sort_by="market_cap", sort_ascending=True)
+        result = provider.resolve_sector(MarketSector.ALL, sf)
 
         assert result == ["B.SZ", "A.SH"]
 
     def test_empty_codes(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
+        mock_tq.get_stock_list.return_value = []
 
-        with patch.object(provider, "_raw_get_stock_list", return_value=[]):
-            result = provider.resolve_sector(MarketSector.BSE, None)
+        result = provider.resolve_sector(MarketSector.BSE, None)
 
         assert result == []
 
     def test_handles_failed_stock_info(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
 
         close_df = pd.DataFrame(
             {"A.SH": [10.0], "B.SZ": [5.0]},
             index=pd.DatetimeIndex(["2025-01-01"]),
         )
+        mock_tq.get_stock_list.return_value = ["A.SH", "B.SZ"]
+        mock_tq.get_market_data.return_value = {"Close": close_df}
+        mock_tq.get_stock_info.side_effect = [
+            Exception("error"), {"J_zgb": "10000"}
+        ]
 
-        with (
-            patch.object(
-                provider, "_raw_get_stock_list", return_value=["A.SH", "B.SZ"]
-            ),
-            patch.object(
-                provider,
-                "_raw_get_market_data",
-                return_value={"Close": close_df},
-            ),
-            patch.object(
-                provider,
-                "_raw_get_stock_info",
-                side_effect=[Exception("error"), {"J_zgb": "10000"}],
-            ),
-        ):
-            sf = SectorFilter(sort_by="market_cap", sort_ascending=True)
-            result = provider.resolve_sector(MarketSector.ALL, sf)
+        sf = SectorFilter(sort_by="market_cap", sort_ascending=True)
+        result = provider.resolve_sector(MarketSector.ALL, sf)
 
         assert result == ["B.SZ"]
 
     def test_market_cap_range_filter(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
 
         close_df = pd.DataFrame(
             {"A.SH": [5.0], "B.SZ": [10.0], "C.SH": [20.0], "D.SZ": [50.0]},
             index=pd.DatetimeIndex(["2025-01-01"]),
         )
+        mock_tq.get_stock_list.return_value = ["A.SH", "B.SZ", "C.SH", "D.SZ"]
+        mock_tq.get_market_data.return_value = {"Close": close_df}
+        mock_tq.get_stock_info.side_effect = [
+            {"J_zgb": "6000"},
+            {"J_zgb": "4000"},
+            {"J_zgb": "2000"},
+            {"J_zgb": "10000"},
+        ]
 
-        with (
-            patch.object(
-                provider,
-                "_raw_get_stock_list",
-                return_value=["A.SH", "B.SZ", "C.SH", "D.SZ"],
-            ),
-            patch.object(
-                provider,
-                "_raw_get_market_data",
-                return_value={"Close": close_df},
-            ),
-            patch.object(
-                provider,
-                "_raw_get_stock_info",
-                side_effect=[
-                    {"J_zgb": "6000"},
-                    {"J_zgb": "4000"},
-                    {"J_zgb": "2000"},
-                    {"J_zgb": "10000"},
-                ],
-            ),
-        ):
-            sf = SectorFilter(
-                sort_by="market_cap",
-                sort_ascending=False,
-                min_market_cap=3.5,
-                max_market_cap=10.0,
-            )
-            result = provider.resolve_sector(MarketSector.ALL, sf)
+        sf = SectorFilter(
+            sort_by="market_cap",
+            sort_ascending=False,
+            min_market_cap=3.5,
+            max_market_cap=10.0,
+        )
+        result = provider.resolve_sector(MarketSector.ALL, sf)
 
         # Sorted desc: D=50, B=4, C=4, A=3. Range [3.5, 10]: B=4, C=4
         assert result == ["B.SZ", "C.SH"]
 
     def test_market_cap_range_with_max_stocks(self) -> None:
+        mock_tq = MagicMock()
         provider = TdxDataProvider.__new__(TdxDataProvider)
-        provider._tq = None
+        provider.tq = mock_tq
 
         close_df = pd.DataFrame(
             {"A.SH": [5.0], "B.SZ": [10.0], "C.SH": [20.0]},
             index=pd.DatetimeIndex(["2025-01-01"]),
         )
+        mock_tq.get_stock_list.return_value = ["A.SH", "B.SZ", "C.SH"]
+        mock_tq.get_market_data.return_value = {"Close": close_df}
+        mock_tq.get_stock_info.side_effect = [
+            {"J_zgb": "6000"},
+            {"J_zgb": "4000"},
+            {"J_zgb": "2000"},
+        ]
 
-        with (
-            patch.object(
-                provider,
-                "_raw_get_stock_list",
-                return_value=["A.SH", "B.SZ", "C.SH"],
-            ),
-            patch.object(
-                provider,
-                "_raw_get_market_data",
-                return_value={"Close": close_df},
-            ),
-            patch.object(
-                provider,
-                "_raw_get_stock_info",
-                side_effect=[
-                    {"J_zgb": "6000"},
-                    {"J_zgb": "4000"},
-                    {"J_zgb": "2000"},
-                ],
-            ),
-        ):
-            sf = SectorFilter(
-                sort_by="market_cap",
-                sort_ascending=False,
-                min_market_cap=3.5,
-                max_stocks=1,
-            )
-            result = provider.resolve_sector(MarketSector.ALL, sf)
+        sf = SectorFilter(
+            sort_by="market_cap",
+            sort_ascending=False,
+            min_market_cap=3.5,
+            max_stocks=1,
+        )
+        result = provider.resolve_sector(MarketSector.ALL, sf)
 
         # Sorted desc: B=4, C=4, A=3. Range >=3.5: B,C. max_stocks=1: [B.SZ]
         assert result == ["B.SZ"]

@@ -48,10 +48,11 @@ def make_exec_context(
 
 def make_kdj_macd_context(
     *,
-    kdj_k: list[float],
-    kdj_d: list[float],
+    kdj_j: list[float],
     macd_dif: float,
     macd_dea: float,
+    ma_20: float,
+    ma_60: float,
     close_price: float = 10.0,
     has_position: bool = False,
     entry_price: float | None = None,
@@ -59,13 +60,14 @@ def make_kdj_macd_context(
 ) -> MagicMock:
     """Create a mock ExecContext for KDJMacdAlgo tests.
 
-    kdj_k and kdj_d are lists of 2 values: [prev, current].
+    kdj_j is a list of 2 values: [prev, current].
     """
     ctx = MagicMock()
-    ctx.KDJ_K = np.array(kdj_k)
-    ctx.KDJ_D = np.array(kdj_d)
+    ctx.KDJ_J = np.array(kdj_j)
     ctx.MACD_DIF = np.array([macd_dif])
     ctx.MACD_DEA = np.array([macd_dea])
+    ctx.MA_20 = np.array([ma_20])
+    ctx.MA_60 = np.array([ma_60])
     ctx.close = np.array([close_price])
     ctx.date = np.array([np.datetime64("2024-06-01")])
     ctx.config = MagicMock()

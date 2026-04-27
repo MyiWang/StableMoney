@@ -17,27 +17,39 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+import pandas as pd
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _LOG_DIR = Path("logs")
 
+_session_dir: Path | None = None
+
 
 def setup_logging(
     level: str = "INFO",
     log_dir: str | Path = _LOG_DIR,
-) -> None:
+) -> Path:
     """Configure logging with console (ERROR only) and file (all levels) output.
 
     Args:
         level: Minimum log level for file output. One of DEBUG, INFO, WARNING, ERROR.
-        log_dir: Directory for log files. Created automatically if it doesn't exist.
-    """
-    log_path = Path(log_dir)
-    log_path.mkdir(parents=True, exist_ok=True)
+        log_dir: Base directory for log sessions.
+            Created automatically if it doesn't exist.
 
+    Returns:
+        Path to the session directory (contains ``backtest.log`` and CSV dumps).
+    """
+    global _session_dir
+
+    log_path = Path(log_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_path / f"backtest_{timestamp}.log"
+    _session_dir = log_path / f"backtest_{timestamp}"
+    _session_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = _session_dir / "backtest.log"
 
     root_logger = logging.getLogger("stablemoney")
     root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
@@ -45,7 +57,7 @@ def setup_logging(
 
     # Avoid duplicate handlers on repeated calls
     if root_logger.handlers:
-        return
+        return _session_dir
 
     # Console handler: ERROR only
     console_handler = logging.StreamHandler()
@@ -61,6 +73,28 @@ def setup_logging(
 
     root_logger.info("日志系统已初始化, 级别=%s, 文件=%s", level.upper(), log_file)
 
+    return _session_dir
+
+
+def dump_stock_csv(
+    df: pd.DataFrame,
+    symbol: str,
+    tag: str,
+) -> Path:
+    """Dump stock DataFrame to CSV for issue reporting.
+
+    CSV is written to the session directory set by :func:`setup_logging`.
+    The DataFrame is sorted by ``symbol`` and ``date`` columns if present.
+    """
+    dir_path = _session_dir or _LOG_DIR
+    dir_path.mkdir(parents=True, exist_ok=True)
+    safe_symbol = symbol.replace(".", "_")
+    path = dir_path / f"{safe_symbol}_{tag}.csv"
+    sort_cols = [c for c in ("symbol", "date") if c in df.columns]
+    sorted_df: Any = df.sort_values(by=sort_cols) if sort_cols else df
+    sorted_df.to_csv(path, index=False)
+    return path
+
 
 def log_dataframe(
     logger: logging.Logger,
@@ -75,8 +109,6 @@ def log_dataframe(
     """
     if not logger.isEnabledFor(level):
         return
-
-    import pandas as pd
 
     if not isinstance(df, pd.DataFrame):
         logger.log(level, "%s: %s", title, df)

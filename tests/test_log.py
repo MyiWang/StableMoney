@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pytest
 
+from stablemoney.log import dump_stock_csv, log_dataframe, setup_logging
+
 if TYPE_CHECKING:
     from pathlib import Path
-
-from stablemoney.log import log_dataframe, setup_logging
 
 
 @pytest.fixture(autouse=True)
@@ -24,10 +24,15 @@ def _reset_logging() -> None:
 
 
 class TestSetupLogging:
-    def test_creates_log_dir(self, tmp_path: Path) -> None:
-        log_dir = tmp_path / "logs"
-        setup_logging(log_dir=log_dir)
-        assert log_dir.exists()
+    def test_returns_session_dir(self, tmp_path: Path) -> None:
+        session_dir = setup_logging(log_dir=tmp_path)
+        assert session_dir.exists()
+        assert session_dir.name.startswith("backtest_")
+
+    def test_creates_log_file_in_session_dir(self, tmp_path: Path) -> None:
+        session_dir = setup_logging(level="INFO", log_dir=tmp_path)
+        log_files = list(session_dir.glob("backtest.log"))
+        assert len(log_files) == 1
 
     def test_creates_file_handler(self, tmp_path: Path) -> None:
         setup_logging(level="DEBUG", log_dir=tmp_path)
@@ -79,14 +84,13 @@ class TestSetupLogging:
         assert root.level == logging.WARNING
 
     def test_log_file_written(self, tmp_path: Path) -> None:
-        setup_logging(level="INFO", log_dir=tmp_path)
+        session_dir = setup_logging(level="INFO", log_dir=tmp_path)
         root = logging.getLogger("stablemoney")
         root.info("test message")
         file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
         file_handlers[0].flush()
-        log_files = list(tmp_path.glob("backtest_*.log"))
-        assert len(log_files) == 1
-        content = log_files[0].read_text(encoding="utf-8")
+        log_file = session_dir / "backtest.log"
+        content = log_file.read_text(encoding="utf-8")
         assert "test message" in content
 
     def test_propagate_disabled(self, tmp_path: Path) -> None:
@@ -109,6 +113,49 @@ class TestSetupLogging:
         assert len(root_records) == 0
 
         logging.root.removeHandler(root_handler)
+
+
+class TestDumpStockCsv:
+    def test_creates_csv_in_session_dir(self, tmp_path: Path) -> None:
+        session_dir = setup_logging(log_dir=tmp_path)
+        df = pd.DataFrame({"close": [10.0, 11.0]})
+        path = dump_stock_csv(df, "600519.SH", "test")
+        assert path.parent == session_dir
+        assert path.exists()
+        assert "600519_SH_test" in path.name
+
+    def test_sorts_by_symbol_and_date(self, tmp_path: Path) -> None:
+        setup_logging(log_dir=tmp_path)
+        df = pd.DataFrame(
+            {
+                "symbol": ["B.SZ", "A.SH", "B.SZ", "A.SH"],
+                "date": ["2024-01-02", "2024-01-01", "2024-01-01", "2024-01-02"],
+                "close": [11.0, 10.0, 12.0, 13.0],
+            }
+        )
+        path = dump_stock_csv(df, "test", "sorted")
+        loaded = pd.read_csv(path)
+        assert loaded["symbol"].iloc[0] == "A.SH"
+        assert loaded["date"].iloc[0] == "2024-01-01"
+
+    def test_no_sort_columns(self, tmp_path: Path) -> None:
+        setup_logging(log_dir=tmp_path)
+        df = pd.DataFrame({"close": [10.0, 11.0]})
+        path = dump_stock_csv(df, "test", "no_sort")
+        assert path.exists()
+        loaded = pd.read_csv(path)
+        assert len(loaded) == 2
+
+    def test_fallback_dir_without_setup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import stablemoney.log as log_mod
+
+        monkeypatch.setattr(log_mod, "_session_dir", tmp_path / "fallback")
+        df = pd.DataFrame({"close": [10.0]})
+        path = dump_stock_csv(df, "test", "fallback")
+        assert path.parent == tmp_path / "fallback"
+        assert path.exists()
 
 
 class TestLogDataframe:
