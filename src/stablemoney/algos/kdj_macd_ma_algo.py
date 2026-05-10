@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.base_algo import BaseAlgo
 from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
-class KdjMacdMaAlgo:
+class KdjMacdMaAlgo(BaseAlgo):
     """KDJ oversold + MACD bullish + MA bullish alignment.
 
     Buy: KDJ.J < 0 and MACD DIF > 0 and DEA > 0 and MA10 > MA20
@@ -27,7 +28,7 @@ class KdjMacdMaAlgo:
     def __init__(self, config: AlgoConfig = _DEFAULT_ALGO_CONFIG) -> None:
         self.config = config
 
-    def __call__(self, ctx: ExecContext) -> None:
+    def trade(self, ctx: ExecContext) -> None:
         kdj_j = ctx.KDJ_J
         macd_dif = ctx.MACD_DIF
         macd_dea = ctx.MACD_DEA

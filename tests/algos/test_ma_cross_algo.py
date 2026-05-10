@@ -45,7 +45,7 @@ class TestMACrossAlgo:
             ma_long_prev=10.0, ma_long_curr=10.5,
         )
         algo = MACrossAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares > 0
 
     def test_no_buy_without_cross(self) -> None:
@@ -54,7 +54,7 @@ class TestMACrossAlgo:
             ma_long_prev=10.0, ma_long_curr=10.5,
         )
         algo = MACrossAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_death_cross_sell(self) -> None:
@@ -64,7 +64,7 @@ class TestMACrossAlgo:
             has_position=True,
         )
         algo = MACrossAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         ctx.sell_all_shares.assert_called_once()
 
     def test_no_sell_without_cross(self) -> None:
@@ -74,7 +74,7 @@ class TestMACrossAlgo:
             has_position=True,
         )
         algo = MACrossAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         ctx.sell_all_shares.assert_not_called()
 
     def test_no_action_on_nan(self) -> None:
@@ -84,7 +84,7 @@ class TestMACrossAlgo:
         )
         ctx.MA_10 = np.array([9.0, float("nan")])
         algo = MACrossAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_stop_loss_applied(self) -> None:
@@ -93,5 +93,5 @@ class TestMACrossAlgo:
             ma_long_prev=10.0, ma_long_curr=10.5,
         )
         algo = MACrossAlgo(config=AlgoConfig(stop_loss_pct=5.0))
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.stop_loss_pct == 5.0

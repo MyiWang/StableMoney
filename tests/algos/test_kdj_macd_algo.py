@@ -51,7 +51,7 @@ class TestKDJMacdAlgo:
             close=15.0, ma20=16.0, ma60=14.0,
         )
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares > 0
 
     def test_no_buy_when_j_not_declining(self) -> None:
@@ -59,7 +59,7 @@ class TestKDJMacdAlgo:
             j_prev=-10.0, j_curr=-5.0,
         )
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_when_j_prev_not_below_zero(self) -> None:
@@ -67,42 +67,42 @@ class TestKDJMacdAlgo:
             j_prev=2.0, j_curr=-1.0,
         )
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_when_dif_negative(self) -> None:
         ctx = make_kdj_macd_context(dif=-0.5)
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_when_close_above_ma20(self) -> None:
         ctx = make_kdj_macd_context(close=17.0, ma20=16.0)
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_when_close_below_ma60(self) -> None:
         ctx = make_kdj_macd_context(close=13.0, ma60=14.0)
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_with_existing_position(self) -> None:
         ctx = make_kdj_macd_context(has_position=True)
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_action_on_nan(self) -> None:
         ctx = make_kdj_macd_context()
         ctx.KDJ_J = np.array([-5.0, float("nan")])
         algo = KDJMacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_stop_loss_applied(self) -> None:
         ctx = make_kdj_macd_context()
         algo = KDJMacdAlgo(config=AlgoConfig(stop_loss_pct=5.0))
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.stop_loss_pct == 5.0

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.base_algo import BaseAlgo
 from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
-class RSIAlgo:
+class RSIAlgo(BaseAlgo):
     """RSI overbought/oversold algo with stop loss.
 
     Entry: RSI < ``oversold``
@@ -35,7 +36,7 @@ class RSIAlgo:
         self.oversold = oversold
         self.overbought = overbought
 
-    def __call__(self, ctx: ExecContext) -> None:
+    def trade(self, ctx: ExecContext) -> None:
         rsi = ctx.RSI_14
         ma = ctx.MA_20
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.base_algo import BaseAlgo
 from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
-class MACrossAlgo:
+class MACrossAlgo(BaseAlgo):
     """MA10/MA20 golden cross buy, death cross sell.
 
     Buy: MA10 crosses above MA20 (golden cross)
@@ -28,7 +29,7 @@ class MACrossAlgo:
     def __init__(self, config: AlgoConfig = _DEFAULT_ALGO_CONFIG) -> None:
         self.config = config
 
-    def __call__(self, ctx: ExecContext) -> None:
+    def trade(self, ctx: ExecContext) -> None:
         ma_short = ctx.MA_10
         ma_long = ctx.MA_20
 

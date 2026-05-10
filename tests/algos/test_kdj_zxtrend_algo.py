@@ -57,7 +57,7 @@ class TestKdjZxtrendAlgo:
             long_t=np.array([95.0, 98.0, 96.0, 100.0, 102.0]),
         )
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares > 0
 
     def test_no_buy_when_j_above_zero(self) -> None:
@@ -65,7 +65,7 @@ class TestKdjZxtrendAlgo:
             kdj_j=np.array([5.0, 10.0]),
         )
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_when_no_golden_cross(self) -> None:
@@ -76,7 +76,7 @@ class TestKdjZxtrendAlgo:
             long_t=np.array([90.0, 92.0, 94.0, 96.0, 98.0]),
         )
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_when_golden_cross_too_old(self) -> None:
@@ -95,38 +95,38 @@ class TestKdjZxtrendAlgo:
             long_t=long_t,
         )
         algo = KdjZxtrendAlgo(lookback=30)
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_buy_with_existing_position(self) -> None:
         ctx = make_context(has_position=True)
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_no_action_on_nan(self) -> None:
         ctx = make_context()
         ctx.KDJ_J = np.array([10.0, float("nan")])
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_stop_loss_applied(self) -> None:
         ctx = make_context()
         algo = KdjZxtrendAlgo(config=AlgoConfig(stop_loss_pct=5.0))
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.stop_loss_pct == 5.0
 
     def test_take_profit_applied(self) -> None:
         ctx = make_context()
         algo = KdjZxtrendAlgo(config=AlgoConfig(take_profit_pct=15.0))
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.stop_profit_pct == 15.0
 
     def test_hold_bars_applied(self) -> None:
         ctx = make_context()
         algo = KdjZxtrendAlgo(config=AlgoConfig(hold_bars=40))
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.hold_bars == 40
 
     def test_sell_on_death_cross(self) -> None:
@@ -138,7 +138,7 @@ class TestKdjZxtrendAlgo:
             long_t=np.array([100.0, 102.0, 98.0, 95.0]),
         )
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         ctx.sell_all_shares.assert_called_once()
 
     def test_no_sell_without_death_cross(self) -> None:
@@ -149,7 +149,7 @@ class TestKdjZxtrendAlgo:
             long_t=np.array([90.0, 92.0, 94.0, 96.0]),
         )
         algo = KdjZxtrendAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         ctx.sell_all_shares.assert_not_called()
 
     def test_golden_cross_at_edge_of_lookback(self) -> None:
@@ -167,5 +167,5 @@ class TestKdjZxtrendAlgo:
             long_t=long_t,
         )
         algo = KdjZxtrendAlgo(lookback=30)
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares > 0

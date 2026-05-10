@@ -45,7 +45,7 @@ class TestMacdAlgo:
             dea_prev=0.05, dea_curr=0.15,
         )
         algo = MacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares > 0
 
     def test_no_buy_without_positive_dif_dea(self) -> None:
@@ -54,7 +54,7 @@ class TestMacdAlgo:
             dea_prev=-0.15, dea_curr=-0.1,
         )
         algo = MacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_death_cross_sell(self) -> None:
@@ -64,7 +64,7 @@ class TestMacdAlgo:
             has_position=True,
         )
         algo = MacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         ctx.sell_all_shares.assert_called_once()
 
     def test_no_sell_without_position(self) -> None:
@@ -73,7 +73,7 @@ class TestMacdAlgo:
             dea_prev=0.1, dea_curr=0.05,
         )
         algo = MacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         ctx.sell_all_shares.assert_not_called()
 
     def test_no_action_on_nan(self) -> None:
@@ -83,7 +83,7 @@ class TestMacdAlgo:
         )
         ctx.MACD_DIF = np.array([0.1, float("nan")])
         algo = MacdAlgo()
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.buy_shares == 0
 
     def test_stop_loss_applied(self) -> None:
@@ -92,5 +92,5 @@ class TestMacdAlgo:
             dea_prev=0.05, dea_curr=0.15,
         )
         algo = MacdAlgo(config=AlgoConfig(stop_loss_pct=3.0))
-        algo(ctx)
+        algo.trade(ctx)
         assert ctx.stop_loss_pct == 3.0

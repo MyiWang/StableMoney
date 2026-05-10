@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.base_algo import BaseAlgo
 from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ALGO_CONFIG = AlgoConfig()
 
 
-class KDJMacdAlgo:
+class KDJMacdAlgo(BaseAlgo):
     """KDJ oversold dip + MACD bullish + MA trend filter.
 
     Buy: J[-2] < 0 and J[-1] < J[-2] and DIF > 0 and DEA > 0
@@ -28,7 +29,7 @@ class KDJMacdAlgo:
     def __init__(self, config: AlgoConfig = _DEFAULT_ALGO_CONFIG) -> None:
         self.config = config
 
-    def __call__(self, ctx: ExecContext) -> None:
+    def trade(self, ctx: ExecContext) -> None:
         kdj_j = ctx.KDJ_J
         macd_dif = ctx.MACD_DIF
         macd_dea = ctx.MACD_DEA

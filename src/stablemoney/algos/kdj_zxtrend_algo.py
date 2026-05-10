@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.base_algo import BaseAlgo
 from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ def _has_recent_golden_cross(
     return False
 
 
-class KdjZxtrendAlgo:
+class KdjZxtrendAlgo(BaseAlgo):
     """Buy when KDJ.J < 0 within *lookback* bars of ZXTREND golden cross.
 
     Buy:  ZXTREND SHORT_T crossed above LONG_T within lookback bars,
@@ -55,7 +56,7 @@ class KdjZxtrendAlgo:
         self.config = config
         self.lookback = lookback
 
-    def __call__(self, ctx: ExecContext) -> None:
+    def trade(self, ctx: ExecContext) -> None:
         kdj_j = ctx.KDJ_J
         short_t = ctx.ZXTREND_SHORT_T
         long_t = ctx.ZXTREND_LONG_T

@@ -9,6 +9,8 @@ from pybroker.config import StrategyConfig as PyBrokerStrategyConfig
 from pybroker.strategy import Strategy as PyBrokerStrategy
 from pybroker.strategy import TestResult
 
+from stablemoney.algos.base_algo import BaseAlgo
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -60,7 +62,7 @@ class StrategyBuilder:
     def __init__(self) -> None:
         self._data_source: DataSource | None = None
         self._backtest: BacktestConfig | None = None
-        self._exec_fn: Callable[[ExecContext], None] | None = None
+        self._algo: BaseAlgo | Callable[[ExecContext], None] | None = None
         self._data_provider: DataProvider | None = None
 
     def set_data_source(self, data_source: DataSource) -> StrategyBuilder:
@@ -73,9 +75,11 @@ class StrategyBuilder:
         self._backtest = backtest
         return self
 
-    def set_algo(self, algo: Callable[[ExecContext], None]) -> StrategyBuilder:
-        """Set the trading logic (class instance or plain function)."""
-        self._exec_fn = algo
+    def set_algo(
+        self, algo: BaseAlgo | Callable[[ExecContext], None]
+    ) -> StrategyBuilder:
+        """Set the trading logic (BaseAlgo instance or plain function)."""
+        self._algo = algo
         return self
 
     def set_data_provider(self, data_provider: DataProvider) -> StrategyBuilder:
@@ -98,7 +102,7 @@ class StrategyBuilder:
 
         assert self._data_source is not None
         assert self._backtest is not None
-        assert self._exec_fn is not None
+        assert self._algo is not None
 
         logger.info(
             "开始回测: start=%s, end=%s, cash=%.0f",
@@ -119,10 +123,15 @@ class StrategyBuilder:
             end_date=datetime.fromisoformat(self._backtest.end_date),
             config=config,
         )
-        strategy.add_execution(
-            fn=self._exec_fn,
-            symbols=symbols,
-        )
+
+        if isinstance(self._algo, BaseAlgo):
+            strategy.add_execution(fn=self._algo.trade, symbols=symbols)
+            if type(self._algo).before_trade is not BaseAlgo.before_trade:
+                strategy.set_before_exec(self._algo.before_trade)
+            if type(self._algo).after_trade is not BaseAlgo.after_trade:
+                strategy.set_after_exec(self._algo.after_trade)
+        else:
+            strategy.add_execution(fn=self._algo, symbols=symbols)
 
         warmup: int | None = None
         if self._backtest.warmup is not None:
@@ -165,7 +174,7 @@ class StrategyBuilder:
             raise ValueError("DataSource is required. Call set_data_source().")
         if self._backtest is None:
             raise ValueError("BacktestConfig is required. Call set_backtest().")
-        if self._exec_fn is None:
+        if self._algo is None:
             raise ValueError("ExecuteCallback is required. Call set_algo().")
 
         has_symbols = bool(self._backtest.symbols)
