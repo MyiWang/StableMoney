@@ -1,7 +1,12 @@
 """KDJ + ZXTREND golden cross strategy example with real TDX data source.
 
 Buy signal: KDJ.J < 0 within 30 bars after ZXTREND SHORT_T crosses above LONG_T
-Exit: stop loss 5%, take profit 15%, max hold 40 bars
+Exit:
+  - LONG_T breakdown (open & close < LONG_T) → sell all
+  - Stop loss 5% → sell all
+  - 10% profit → sell half
+  - SHORT_T breakdown (open & close < SHORT_T) → sell half of remaining
+Position: 20,000 yuan per stock, rolling
 
 Requires a running TDX environment with tqcenter installed.
 See CLAUDE.md for TDX setup details.
@@ -32,6 +37,7 @@ from stablemoney.data_sources import TdxDataSource
 from stablemoney.indicators import KDJ, ZXTREND
 from stablemoney.log import setup_logging
 from stablemoney.data_providers.tdx_data_provider import TdxDataProvider
+from stablemoney.metrics_i18n import translate_metrics
 
 # ---------------------------------------------------------------------------
 # Run
@@ -57,7 +63,7 @@ if __name__ == "__main__":
             sort_ascending=False,
         ),
         start_date="2019-01-01",
-        end_date="2023-12-31",
+        end_date="2025-12-31",
         initial_cash=100_000,
         indicators=[KDJ(9, 3, 3), ZXTREND(14, 28, 57, 114)],
         warmup=114,
@@ -77,12 +83,10 @@ if __name__ == "__main__":
         .set_backtest(backtest_config)
         .set_algo(
             KdjZxtrendAlgo(
-                config=AlgoConfig(
-                    stop_loss_pct=5,
-                    take_profit_pct=15,
-                    hold_bars=40,
-                ),
+                config=AlgoConfig(stop_loss_pct=5),
                 lookback=30,
+                position_amount=20_000,
+                take_profit_pct=10.0,
             )
         )
         .run()
@@ -94,4 +98,4 @@ if __name__ == "__main__":
     print(f"最终权益: {result.portfolio['equity'].iloc[-1]:,.2f}")
     print(f"总交易次数: {len(result.trades)}")
     print()
-    print(result.metrics_df)
+    print(translate_metrics(result.metrics_df))
