@@ -1,7 +1,7 @@
 """Built-in indicator definitions."""
 
 from stablemoney.indicators.oscillator import CCI, KDJ, RSI, WR
-from stablemoney.indicators.trend import EMA, MA, MACD
+from stablemoney.indicators.trend import EMA, MA, MACD, ZXTREND
 from stablemoney.indicators.volatility import ATR, BOLL
 from stablemoney.indicators.volume import OBV, VOL_MA
 
@@ -17,4 +17,5 @@ __all__ = [
     "RSI",
     "VOL_MA",
     "WR",
+    "ZXTREND",
 ]

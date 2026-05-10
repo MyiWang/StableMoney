@@ -37,7 +37,7 @@ python -m venv .venv
 .venv/Scripts/python -m pytest tests/ --cov=stablemoney --cov-report=term-missing
 ```
 
-测试套件 229 个用例，覆盖 16 个测试文件。
+测试套件 181 个用例，覆盖 17 个测试文件。
 
 ## 架构
 
@@ -93,8 +93,9 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 
 - **交易逻辑接口**：`set_algo()` 接受 `Callable[[ExecContext], None]`，支持类实例（实现 `__call__`）或裸函数
 - **AlgoConfig**：`src/stablemoney/algos/algo_config.py` 中的 frozen dataclass，存放通用风控参数（`stop_loss_pct`、`take_profit_pct`、`hold_bars`），作为 Algo 构造函数的参数注入
-- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`MACrossAlgo`、`MacdAlgo`、`KdjMacdMaAlgo`）
+- **内建 Algo**：`src/stablemoney/algos/` 子包存放具体实现（`RSIAlgo`、`KDJMacdAlgo`、`KdjZxtrendAlgo`、`MACrossAlgo`、`MacdAlgo`、`KdjMacdMaAlgo`）
   - `KDJMacdAlgo`：买入信号为 J[-2]<0 且 J 下降 + MACD DIF/DEA>0 + close>MA60 + close<MA20，仅风控退出（止损/止盈/最大持股）
+  - `KdjZxtrendAlgo`：买入信号为 ZXTREND SHORT_T 上穿 LONG_T（金叉）后 lookback（默认30）根 K 线内 KDJ.J < 0；卖出信号为 SHORT_T 跌穿 LONG_T（死叉）全部卖出，另支持止损/止盈/最大持股
 - **用户自定义**：任何实现 `__call__(ctx: ExecContext) -> None` 的类或函数即可，无需继承
 
 ### Sector 系统
@@ -123,9 +124,53 @@ TDX 预计算的指标列通过 `register_custom_cols()` 注册，PyBroker 的 `
 
 ## 编码规范
 
-- 全程严格类型标注，Python 3.10+
+### PEP 8 合规
+
+严格遵循 PEP 8。工具链强制执行（`pyproject.toml` 配置）：
+
+- **ruff**：E/W（pycodestyle）、F（Pyflakes）、I（isort）、N（pep8-naming）、UP（pyupgrade）、B（bugbear）、SIM（simplify）、TCH（type-checking）
+- **mypy strict**：`strict = true`、`disallow_untyped_defs = true`、`disallow_incomplete_defs = true`
+
+提交前必须通过：`ruff check` + `mypy` 无错误。
+
+### 类型标注
+
+所有函数和方法必须有完整的参数和返回值类型标注。局部变量在类型不显然时也需标注。规则：
+
+- 使用 `X | None`（而非 `Optional[X]`）
+- 使用 `from collections.abc import Callable, Iterable`（而非 `typing`）
+- 仅用于类型标注的导入放入 `TYPE_CHECKING` 块
+- Python 3.10+ 语法（`match`、`|` 联合类型、`ParamSpec` 等）
+
+### 项目约定
+
 - 文件以主类名命名（`strategy_builder.py`、`indicator_def.py` 等）
 - 不做没必要的封装——直接使用 PyBroker 的 `ExecContext`，不自定义包装
-- 仅用于类型标注的导入放入 `TYPE_CHECKING` 块
-- 使用 `from collections.abc import Callable, Iterable`（而非 `typing`）
-- 使用 `X | None` 语法（而非 `Optional[X]`）
+- 指标工厂函数使用大写命名（`MA()`、`RSI()`），通过 ruff per-file-ignores 抑制 N802
+
+## Claude Skills 参考
+
+本项目配置了以下 Claude Code skills（`.claude/skills/`），按场景选用：
+
+### 开发方法论
+
+| Skill | 触发场景 | 说明 |
+|-------|---------|------|
+| `task-breakdown` | 新需求、想法拆解、任务规划 | 拷问假设 → 拆解为垂直切片任务 → 排优先级 |
+| `tdd-methodology` | 测试编写、TDD 循环、接口设计 | 垂直切片 TDD 方法论（pytest） |
+| `diagnose` | Bug 诊断、测试失败调查、异常排查 | 6 阶段系统化调试方法论 |
+| `code-review` | 代码审查、架构改善、模块重构 | 代码质量检查 + 深模块架构改善 |
+
+### 领域知识
+
+| Skill | 触发场景 | 说明 |
+|-------|---------|------|
+| `dev-new-task` | 新功能开发、策略编写、模块重构 | 6 步开发闭环流程 |
+| `pybroker-strategy` | 交易策略编写、回测、指标定义 | PyBroker 框架使用指南 |
+| `tdx-market-data` | 通达信数据获取、TDX API 调用 | tqcenter Python SDK 参考 |
+
+skill 之间有交叉依赖：
+- 方法论链：`task-breakdown`（需求拆解）→ `tdd-methodology`（编码）→ `diagnose`（调试）→ `code-review`（审查改善）
+- 编写新策略时，`dev-new-task` 的 Step 2 会自动加载 `pybroker-strategy`
+- 涉及 TDX 数据获取时，`dev-new-task` 会加载 `tdx-market-data`
+- `pybroker-strategy` 中的 DataSource 模式依赖 `tdx-market-data` 中的 TDX API

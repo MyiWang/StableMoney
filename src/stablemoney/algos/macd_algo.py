@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
     from pybroker.context import ExecContext
@@ -45,13 +46,7 @@ class MacdAlgo:
             and dea[-1] > 0
         ):
             shares = int(ctx.config.initial_cash / ctx.close[-1])
-            ctx.buy_shares = max(shares, 100)
-            if self.config.stop_loss_pct > 0:
-                ctx.stop_loss_pct = self.config.stop_loss_pct
-            if self.config.take_profit_pct > 0:
-                ctx.stop_profit_pct = self.config.take_profit_pct
-            if self.config.hold_bars > 0:
-                ctx.hold_bars = self.config.hold_bars
+            place_buy(ctx, shares, self.config)
             logger.info(
                 "MACD金叉买入 %s: date=%s DIF=%.4f DEA=%.4f "
                 "shares=%d",

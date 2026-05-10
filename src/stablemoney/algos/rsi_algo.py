@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.buy import place_buy
 
 if TYPE_CHECKING:
     from pybroker.context import ExecContext
@@ -47,20 +48,9 @@ class RSIAlgo:
 
         pos = ctx.long_pos()
 
-        if pos is not None and pos.entries and self.config.stop_loss_pct > 0:
-            entry_price = float(pos.entries[0].price)
-            pnl_pct = (ctx.close[-1] - entry_price) / entry_price * 100
-            if pnl_pct <= -self.config.stop_loss_pct:
-                logger.info(
-                    "止损卖出 %s: date=%s, entry=%.2f, close=%.2f, pnl=%.2f%%",
-                    ctx.symbol, ctx.date[-1], entry_price, ctx.close[-1], pnl_pct,
-                )
-                ctx.sell_all_shares()  # type: ignore[no-untyped-call]
-                return
-
         if rsi[-1] < self.oversold and pos is None:
             shares = int(ctx.config.initial_cash / ma[-1] / 10)
-            ctx.buy_shares = max(shares, 100)
+            place_buy(ctx, shares, self.config)
             logger.info(
                 "RSI买入 %s: date=%s, rsi=%.2f < %d, shares=%d",
                 ctx.symbol, ctx.date[-1], rsi[-1], self.oversold, ctx.buy_shares,

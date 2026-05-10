@@ -201,121 +201,11 @@ class TdxDataProvider(DataProvider):
 
         parts: list[pd.DataFrame] = []
         for symbol in sorted(symbols):
-            logger.info("[TDX] 开始获取 %s 的 K 线数据", symbol)
-            kline_data = dict(self.tq.get_market_data(
-                stock_list=[symbol],
-                period=period,
-                start_time=start_str,
-                end_time=end_str,
-                dividend_type="front",
-                fill_data=True,
-            ))
-
-            stock_df = self._convert_kline_to_dataframe(kline_data, symbol)
-            if stock_df.empty:
-                logger.debug("[TDX] %s: K线数据为空，跳过", symbol)
-                continue
-
-            logger.info(
-                "[TDX] %s: 获取到 %d 条 K 线, 日期范围 %s ~ %s",
-                symbol,
-                len(stock_df),
-                stock_df["date"].iloc[0],
-                stock_df["date"].iloc[-1],
+            stock_df = self._process_single_stock(
+                symbol, start_str, end_str, period, indicators
             )
-
-            bad_mask = stock_df["close"] <= 0
-            if bad_mask.any():
-                bad_prices = stock_df[bad_mask]
-                first_date = (
-                    bad_prices["date"].iloc[0]
-                    if "date" in bad_prices.columns
-                    else "N/A"
-                )
-                last_date = (
-                    bad_prices["date"].iloc[-1]
-                    if "date" in bad_prices.columns
-                    else "N/A"
-                )
-                logger.warning(
-                    "[TDX] %s: K线存在非正收盘价, 共 %d 条, "
-                    "最小值=%.4f, 日期范围=%s ~ %s, "
-                    "已导出到 %s",
-                    symbol,
-                    len(bad_prices),
-                    stock_df["close"].min(),
-                    first_date,
-                    last_date,
-                    dump_stock_csv(stock_df, symbol, "bad_price"),
-                )
-                continue
-
-            if indicators and "Close" in kline_data:
-                bar_count = len(kline_data["Close"][symbol])
-                formatted = dict(self.tq.formula_format_data(kline_data))
-                stock_formatted = formatted.get(symbol, [])
-                fmt_len = len(stock_formatted)
-
-                if fmt_len != bar_count:
-                    logger.warning(
-                        "[TDX] %s: K线 bar_count=%d, formula_format_data=%d, "
-                        "差值=%d, 已导出到 %s",
-                        symbol,
-                        bar_count,
-                        fmt_len,
-                        bar_count - fmt_len,
-                        dump_stock_csv(stock_df, symbol, "fmt_mismatch"),
-                    )
-
-                if stock_formatted:
-                    self.tq.formula_set_data(
-                        stock_code=symbol,
-                        stock_period=period,
-                        stock_data=stock_formatted,
-                        count=len(stock_formatted),
-                        dividend_type=1,
-                    )
-                    for ind_def in indicators:
-                        logger.info(
-                            "[TDX] %s: 计算指标 %s(%s)",
-                            symbol,
-                            ind_def.name,
-                            ind_def.formula_arg,
-                        )
-                        result = dict(self.tq.formula_zb(
-                            formula_name=ind_def.name,
-                            formula_arg=ind_def.formula_arg,
-                        ))
-                        if result and "Value" in result and result["Value"]:
-                            for out_name, vals in result["Value"].items():
-                                if vals is not None and len(vals) != bar_count:
-                                    logger.warning(
-                                        "[TDX] %s: formula_zb(%s) 输出 %s "
-                                        "返回 %d 值, K线 bar_count=%d, "
-                                        "差值=%d, 已导出到 %s",
-                                        symbol,
-                                        ind_def.name,
-                                        out_name,
-                                        len(vals),
-                                        bar_count,
-                                        len(vals) - bar_count,
-                                        dump_stock_csv(
-                                            stock_df,
-                                            symbol,
-                                            f"zb_mismatch_{ind_def.name}",
-                                        ),
-                                    )
-                        self._merge_indicator_result(
-                            stock_df, result, ind_def, bar_count
-                        )
-                        logger.debug(
-                            "[TDX] %s: 指标 %s 计算完成, 输出列=%s",
-                            symbol,
-                            ind_def.name,
-                            ind_def.column_names,
-                        )
-
-            parts.append(stock_df)
+            if stock_df is not None:
+                parts.append(stock_df)
 
         if not parts:
             return pd.DataFrame(columns=["symbol", "date"])
@@ -328,6 +218,135 @@ class TdxDataProvider(DataProvider):
             len(symbols),
         )
         return df
+
+    def _process_single_stock(
+        self,
+        symbol: str,
+        start_str: str,
+        end_str: str,
+        period: str,
+        indicators: list[IndicatorDef],
+    ) -> pd.DataFrame | None:
+        """Fetch and process data for a single stock.
+
+        Returns the stock DataFrame with indicator columns,
+        or ``None`` if the stock should be skipped.
+        """
+        logger.info("[TDX] 开始获取 %s 的 K 线数据", symbol)
+        kline_data = dict(self.tq.get_market_data(
+            stock_list=[symbol],
+            period=period,
+            start_time=start_str,
+            end_time=end_str,
+            dividend_type="front",
+            fill_data=True,
+        ))
+
+        stock_df = self._convert_kline_to_dataframe(kline_data, symbol)
+        if stock_df.empty:
+            logger.debug("[TDX] %s: K线数据为空，跳过", symbol)
+            return None
+
+        logger.info(
+            "[TDX] %s: 获取到 %d 条 K 线, 日期范围 %s ~ %s",
+            symbol,
+            len(stock_df),
+            stock_df["date"].iloc[0],
+            stock_df["date"].iloc[-1],
+        )
+
+        bad_mask = stock_df["close"] <= 0
+        if bad_mask.any():
+            bad_prices = stock_df[bad_mask]
+            first_date = (
+                bad_prices["date"].iloc[0]
+                if "date" in bad_prices.columns
+                else "N/A"
+            )
+            last_date = (
+                bad_prices["date"].iloc[-1]
+                if "date" in bad_prices.columns
+                else "N/A"
+            )
+            logger.warning(
+                "[TDX] %s: K线存在非正收盘价, 共 %d 条, "
+                "最小值=%.4f, 日期范围=%s ~ %s, "
+                "已导出到 %s",
+                symbol,
+                len(bad_prices),
+                stock_df["close"].min(),
+                first_date,
+                last_date,
+                dump_stock_csv(stock_df, symbol, "bad_price"),
+            )
+            return None
+
+        if indicators and "Close" in kline_data:
+            bar_count = len(kline_data["Close"][symbol])
+            formatted = dict(self.tq.formula_format_data(kline_data))
+            stock_formatted = formatted.get(symbol, [])
+            fmt_len = len(stock_formatted)
+
+            if fmt_len != bar_count:
+                logger.warning(
+                    "[TDX] %s: K线 bar_count=%d, formula_format_data=%d, "
+                    "差值=%d, 已导出到 %s",
+                    symbol,
+                    bar_count,
+                    fmt_len,
+                    bar_count - fmt_len,
+                    dump_stock_csv(stock_df, symbol, "fmt_mismatch"),
+                )
+
+            if stock_formatted:
+                self.tq.formula_set_data(
+                    stock_code=symbol,
+                    stock_period=period,
+                    stock_data=stock_formatted,
+                    count=len(stock_formatted),
+                    dividend_type=1,
+                )
+                for ind_def in indicators:
+                    logger.info(
+                        "[TDX] %s: 计算指标 %s(%s)",
+                        symbol,
+                        ind_def.name,
+                        ind_def.formula_arg,
+                    )
+                    result = dict(self.tq.formula_zb(
+                        formula_name=ind_def.name,
+                        formula_arg=ind_def.formula_arg,
+                    ))
+                    if result and "Value" in result and result["Value"]:
+                        for out_name, vals in result["Value"].items():
+                            if vals is not None and len(vals) != bar_count:
+                                logger.warning(
+                                    "[TDX] %s: formula_zb(%s) 输出 %s "
+                                    "返回 %d 值, K线 bar_count=%d, "
+                                    "差值=%d, 已导出到 %s",
+                                    symbol,
+                                    ind_def.name,
+                                    out_name,
+                                    len(vals),
+                                    bar_count,
+                                    len(vals) - bar_count,
+                                    dump_stock_csv(
+                                        stock_df,
+                                        symbol,
+                                        f"zb_mismatch_{ind_def.name}",
+                                    ),
+                                )
+                    self._merge_indicator_result(
+                        stock_df, result, ind_def, bar_count
+                    )
+                    logger.debug(
+                        "[TDX] %s: 指标 %s 计算完成, 输出列=%s",
+                        symbol,
+                        ind_def.name,
+                        ind_def.column_names,
+                    )
+
+        return stock_df
 
     def resolve_sector(
         self,
