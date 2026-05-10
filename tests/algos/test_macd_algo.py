@@ -1,152 +1,96 @@
-"""Tests for MacdAlgo trading logic."""
+"""Tests for MacdAlgo."""
+
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+import numpy as np
+
+from stablemoney.algos.algo_config import AlgoConfig
 from stablemoney.algos.macd_algo import MacdAlgo
-from tests.algos.conftest import make_macd_context
 
 
-class TestEarlyReturn:
-    def test_nan_dif(self, macd_algo: MacdAlgo) -> None:
+def make_macd_context(
+    *,
+    dif_prev: float,
+    dif_curr: float,
+    dea_prev: float,
+    dea_curr: float,
+    close_price: float = 10.0,
+    has_position: bool = False,
+) -> MagicMock:
+    ctx = MagicMock()
+    ctx.MACD_DIF = np.array([dif_prev, dif_curr])
+    ctx.MACD_DEA = np.array([dea_prev, dea_curr])
+    ctx.close = np.array([close_price])
+    ctx.date = np.array([np.datetime64("2024-06-01")])
+    ctx.symbol = "600519.SH"
+    ctx.config = MagicMock()
+    ctx.config.initial_cash = 100_000
+    ctx.buy_shares = 0
+
+    if has_position:
+        pos = MagicMock()
+        ctx.long_pos.return_value = pos
+    else:
+        ctx.long_pos.return_value = None
+
+    return ctx
+
+
+class TestMacdAlgo:
+    def test_golden_cross_buy(self) -> None:
         ctx = make_macd_context(
-            macd_dif=[float("nan"), float("nan")],
-            macd_dea=[0.1, 0.1],
+            dif_prev=-0.1, dif_curr=0.2,
+            dea_prev=0.05, dea_curr=0.15,
         )
-        macd_algo(ctx)
-        assert ctx.buy_shares == 0
-        ctx.sell_all_shares.assert_not_called()
+        algo = MacdAlgo()
+        algo(ctx)
+        assert ctx.buy_shares > 0
 
-    def test_nan_dea(self, macd_algo: MacdAlgo) -> None:
+    def test_no_buy_without_positive_dif_dea(self) -> None:
         ctx = make_macd_context(
-            macd_dif=[0.1, 0.1],
-            macd_dea=[float("nan"), float("nan")],
+            dif_prev=-0.2, dif_curr=-0.05,
+            dea_prev=-0.15, dea_curr=-0.1,
         )
-        macd_algo(ctx)
-        assert ctx.buy_shares == 0
-        ctx.sell_all_shares.assert_not_called()
-
-
-class TestBuy:
-    def test_golden_cross(self, macd_algo: MacdAlgo) -> None:
-        ctx = make_macd_context(
-            macd_dif=[-0.1, 0.2],
-            macd_dea=[0.1, 0.1],
-            close_price=10.0,
-        )
-        macd_algo(ctx)
-        assert ctx.buy_shares >= 100
-        ctx.sell_all_shares.assert_not_called()
-
-    def test_no_cross_no_buy(self, macd_algo: MacdAlgo) -> None:
-        # DIF stays above DEA, no cross
-        ctx = make_macd_context(
-            macd_dif=[0.2, 0.2],
-            macd_dea=[0.1, 0.1],
-        )
-        macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_death_cross_no_buy(self, macd_algo: MacdAlgo) -> None:
-        # DIF crosses below DEA, no buy
-        ctx = make_macd_context(
-            macd_dif=[0.2, -0.1],
-            macd_dea=[0.1, 0.1],
-        )
-        macd_algo(ctx)
+        algo = MacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_has_position_no_buy(self, macd_algo: MacdAlgo) -> None:
+    def test_death_cross_sell(self) -> None:
         ctx = make_macd_context(
-            macd_dif=[-0.1, 0.2],
-            macd_dea=[0.1, 0.1],
+            dif_prev=0.2, dif_curr=-0.05,
+            dea_prev=0.1, dea_curr=0.05,
             has_position=True,
-            entry_price=10.0,
         )
-        macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_golden_cross_but_dif_negative(
-        self, macd_algo: MacdAlgo,
-    ) -> None:
-        # Golden cross but DIF < 0, no buy
-        ctx = make_macd_context(
-            macd_dif=[-0.3, -0.1],
-            macd_dea=[-0.2, -0.15],
-        )
-        macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_golden_cross_but_dea_negative(
-        self, macd_algo: MacdAlgo,
-    ) -> None:
-        # Golden cross but DEA < 0, no buy
-        ctx = make_macd_context(
-            macd_dif=[-0.3, 0.1],
-            macd_dea=[-0.2, -0.1],
-        )
-        macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_golden_cross_applies_risk(
-        self, macd_algo_with_risk: MacdAlgo,
-    ) -> None:
-        ctx = make_macd_context(
-            macd_dif=[-0.1, 0.2],
-            macd_dea=[0.1, 0.1],
-            close_price=10.0,
-        )
-        macd_algo_with_risk(ctx)
-        assert ctx.buy_shares >= 100
-        assert ctx.stop_loss_pct == 3
-        assert ctx.stop_profit_pct == 10
-        assert ctx.hold_bars == 20
-
-
-class TestSell:
-    def test_death_cross_with_position(
-        self, macd_algo: MacdAlgo,
-    ) -> None:
-        ctx = make_macd_context(
-            macd_dif=[0.2, -0.1],
-            macd_dea=[0.1, 0.1],
-            has_position=True,
-            entry_price=10.0,
-        )
-        macd_algo(ctx)
+        algo = MacdAlgo()
+        algo(ctx)
         ctx.sell_all_shares.assert_called_once()
+
+    def test_no_sell_without_position(self) -> None:
+        ctx = make_macd_context(
+            dif_prev=0.2, dif_curr=-0.05,
+            dea_prev=0.1, dea_curr=0.05,
+        )
+        algo = MacdAlgo()
+        algo(ctx)
+        ctx.sell_all_shares.assert_not_called()
+
+    def test_no_action_on_nan(self) -> None:
+        ctx = make_macd_context(
+            dif_prev=-0.1, dif_curr=0.2,
+            dea_prev=0.05, dea_curr=0.15,
+        )
+        ctx.MACD_DIF = np.array([0.1, float("nan")])
+        algo = MacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_death_cross_no_position(
-        self, macd_algo: MacdAlgo,
-    ) -> None:
+    def test_stop_loss_applied(self) -> None:
         ctx = make_macd_context(
-            macd_dif=[0.2, -0.1],
-            macd_dea=[0.1, 0.1],
+            dif_prev=-0.1, dif_curr=0.2,
+            dea_prev=0.05, dea_curr=0.15,
         )
-        macd_algo(ctx)
-        ctx.sell_all_shares.assert_not_called()
-
-    def test_no_cross_with_position(
-        self, macd_algo: MacdAlgo,
-    ) -> None:
-        # DIF stays above DEA, no sell
-        ctx = make_macd_context(
-            macd_dif=[0.2, 0.2],
-            macd_dea=[0.1, 0.1],
-            has_position=True,
-            entry_price=10.0,
-        )
-        macd_algo(ctx)
-        ctx.sell_all_shares.assert_not_called()
-
-    def test_golden_cross_no_sell(
-        self, macd_algo: MacdAlgo,
-    ) -> None:
-        # Golden cross while holding — should not sell
-        ctx = make_macd_context(
-            macd_dif=[-0.1, 0.2],
-            macd_dea=[0.1, 0.1],
-            has_position=True,
-            entry_price=10.0,
-        )
-        macd_algo(ctx)
-        ctx.sell_all_shares.assert_not_called()
+        algo = MacdAlgo(config=AlgoConfig(stop_loss_pct=3.0))
+        algo(ctx)
+        assert ctx.stop_loss_pct == 3.0

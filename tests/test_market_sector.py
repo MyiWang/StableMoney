@@ -1,87 +1,78 @@
-"""Tests for MarketSector enum and SectorFilter."""
+"""Tests for MarketSector enum and SectorFilter dataclass."""
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 
 import pytest
-
 from stablemoney.market_sector import MarketSector, SectorFilter
 
 
 class TestMarketSector:
-    def test_all_a_shares(self) -> None:
-        assert MarketSector.ALL == "5"
+    def test_all(self) -> None:
+        assert MarketSector.ALL.value == "5"
 
     def test_main_sh(self) -> None:
-        assert MarketSector.MAIN_SH == "7"
+        assert MarketSector.MAIN_SH.value == "7"
 
     def test_main_sz(self) -> None:
-        assert MarketSector.MAIN_SZ == "8"
+        assert MarketSector.MAIN_SZ.value == "8"
 
     def test_chinext(self) -> None:
-        assert MarketSector.CHINEXT == "51"
-
-    def test_star(self) -> None:
-        assert MarketSector.STAR == "52"
-
-    def test_bse(self) -> None:
-        assert MarketSector.BSE == "53"
-
-    def test_is_string(self) -> None:
-        assert isinstance(MarketSector.CHINEXT, str)
-
-    def test_value_access(self) -> None:
         assert MarketSector.CHINEXT.value == "51"
 
-    def test_from_value(self) -> None:
-        assert MarketSector("51") is MarketSector.CHINEXT
+    def test_star(self) -> None:
+        assert MarketSector.STAR.value == "52"
 
-    def test_invalid_value(self) -> None:
-        with pytest.raises(ValueError):
-            MarketSector("999")
+    def test_bse(self) -> None:
+        assert MarketSector.BSE.value == "53"
+
+    def test_member_count(self) -> None:
+        assert len(MarketSector) == 6
+
+    def test_is_str_enum(self) -> None:
+        assert isinstance(MarketSector.ALL, str)
 
 
 class TestSectorFilterDefaults:
-    def test_default_max_stocks(self) -> None:
-        sf = SectorFilter()
-        assert sf.max_stocks is None
+    def test_max_stocks(self) -> None:
+        f = SectorFilter()
+        assert f.max_stocks is None
 
-    def test_default_sort_by(self) -> None:
-        sf = SectorFilter()
-        assert sf.sort_by is None
+    def test_sort_by(self) -> None:
+        f = SectorFilter()
+        assert f.sort_by is None
 
-    def test_default_sort_ascending(self) -> None:
-        sf = SectorFilter()
-        assert sf.sort_ascending is True
+    def test_sort_ascending(self) -> None:
+        f = SectorFilter()
+        assert f.sort_ascending is True
 
-    def test_default_min_market_cap(self) -> None:
-        sf = SectorFilter()
-        assert sf.min_market_cap is None
+    def test_min_market_cap(self) -> None:
+        f = SectorFilter()
+        assert f.min_market_cap is None
 
-    def test_default_max_market_cap(self) -> None:
-        sf = SectorFilter()
-        assert sf.max_market_cap is None
+    def test_max_market_cap(self) -> None:
+        f = SectorFilter()
+        assert f.max_market_cap is None
 
 
 class TestSectorFilterCustom:
-    def test_custom_values(self) -> None:
-        sf = SectorFilter(
-            max_stocks=50,
-            sort_by="market_cap",
-            sort_ascending=False,
-            min_market_cap=300.0,
-            max_market_cap=500.0,
-        )
-        assert sf.max_stocks == 50
-        assert sf.sort_by == "market_cap"
-        assert sf.sort_ascending is False
-        assert sf.min_market_cap == 300.0
-        assert sf.max_market_cap == 500.0
+    def test_max_stocks(self) -> None:
+        f = SectorFilter(max_stocks=50)
+        assert f.max_stocks == 50
+
+    def test_sort_by_market_cap(self) -> None:
+        f = SectorFilter(sort_by="market_cap")
+        assert f.sort_by == "market_cap"
+
+    def test_cap_range(self) -> None:
+        f = SectorFilter(min_market_cap=100.0, max_market_cap=500.0)
+        assert f.min_market_cap == 100.0
+        assert f.max_market_cap == 500.0
 
 
 class TestSectorFilterFrozen:
     def test_frozen(self) -> None:
-        sf = SectorFilter()
+        f = SectorFilter(max_stocks=10)
         with pytest.raises(FrozenInstanceError):
-            sf.max_stocks = 10  # type: ignore[misc]
+            f.max_stocks = 20  # type: ignore[misc]

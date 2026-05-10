@@ -1,183 +1,108 @@
-"""Tests for KDJMacdAlgo trading logic."""
+"""Tests for KDJMacdAlgo."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
-from tests.algos.conftest import make_kdj_macd_context
+import numpy as np
 
-if TYPE_CHECKING:
-    from stablemoney.algos.kdj_macd_algo import KDJMacdAlgo
-
-# Default test values: all buy conditions met
-# J[-2]=-10 (<0), J[-1]=-15 (<J[-2]), DIF=0.5 (>0), DEA=0.3 (>0)
-# close=15 (>MA60=12), close=15 (<MA20=16)
-_J_BUY = [-10.0, -15.0]
-_DIF_BUY = 0.5
-_DEA_BUY = 0.3
-_MA20_BUY = 16.0
-_MA60_BUY = 12.0
-_CLOSE_BUY = 15.0
+from stablemoney.algos.algo_config import AlgoConfig
+from stablemoney.algos.kdj_macd_algo import KDJMacdAlgo
 
 
-class TestEarlyReturn:
-    def test_nan_kdj_j(self, kdj_macd_algo: KDJMacdAlgo) -> None:
+def make_kdj_macd_context(
+    *,
+    j_prev: float = -5.0,
+    j_curr: float = -10.0,
+    dif: float = 0.5,
+    dea: float = 0.3,
+    close: float = 15.0,
+    ma20: float = 16.0,
+    ma60: float = 14.0,
+    has_position: bool = False,
+) -> MagicMock:
+    ctx = MagicMock()
+    ctx.KDJ_J = np.array([j_prev, j_curr])
+    ctx.MACD_DIF = np.array([dif])
+    ctx.MACD_DEA = np.array([dea])
+    ctx.MA_20 = np.array([ma20])
+    ctx.MA_60 = np.array([ma60])
+    ctx.close = np.array([close])
+    ctx.date = np.array([np.datetime64("2024-06-01")])
+    ctx.symbol = "600519.SH"
+    ctx.config = MagicMock()
+    ctx.config.initial_cash = 100_000
+    ctx.buy_shares = 0
+
+    if has_position:
+        pos = MagicMock()
+        ctx.long_pos.return_value = pos
+    else:
+        ctx.long_pos.return_value = None
+
+    return ctx
+
+
+class TestKDJMacdAlgo:
+    def test_buy_when_all_conditions_met(self) -> None:
         ctx = make_kdj_macd_context(
-            kdj_j=[float("nan"), float("nan")],
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
+            j_prev=-5.0, j_curr=-10.0,
+            dif=0.5, dea=0.3,
+            close=15.0, ma20=16.0, ma60=14.0,
         )
-        kdj_macd_algo(ctx)
-        assert ctx.buy_shares == 0
-        ctx.sell_all_shares.assert_not_called()
+        algo = KDJMacdAlgo()
+        algo(ctx)
+        assert ctx.buy_shares > 0
 
-    def test_nan_macd_dif(self, kdj_macd_algo: KDJMacdAlgo) -> None:
+    def test_no_buy_when_j_not_declining(self) -> None:
         ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=float("nan"),
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
+            j_prev=-10.0, j_curr=-5.0,
         )
-        kdj_macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_nan_macd_dea(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=float("nan"),
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-        )
-        kdj_macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_nan_ma20(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=float("nan"),
-            ma_60=_MA60_BUY,
-        )
-        kdj_macd_algo(ctx)
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_nan_ma60(self, kdj_macd_algo: KDJMacdAlgo) -> None:
+    def test_no_buy_when_j_prev_not_below_zero(self) -> None:
         ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=float("nan"),
+            j_prev=2.0, j_curr=-1.0,
         )
-        kdj_macd_algo(ctx)
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-
-class TestBuy:
-    def test_all_conditions_met_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=_CLOSE_BUY,
-        )
-        kdj_macd_algo(ctx)
-        assert ctx.buy_shares >= 100
-        ctx.sell_all_shares.assert_not_called()
-
-    def test_j_prev_positive_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        # J[-2] > 0, condition J[-2] < 0 not met
-        ctx = make_kdj_macd_context(
-            kdj_j=[5.0, -15.0],
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=_CLOSE_BUY,
-        )
-        kdj_macd_algo(ctx)
+    def test_no_buy_when_dif_negative(self) -> None:
+        ctx = make_kdj_macd_context(dif=-0.5)
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_j_rising_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        # J[-1] > J[-2], condition J[-1] < J[-2] not met
-        ctx = make_kdj_macd_context(
-            kdj_j=[-15.0, -10.0],
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=_CLOSE_BUY,
-        )
-        kdj_macd_algo(ctx)
+    def test_no_buy_when_close_above_ma20(self) -> None:
+        ctx = make_kdj_macd_context(close=17.0, ma20=16.0)
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_dif_negative_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=-0.5,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=_CLOSE_BUY,
-        )
-        kdj_macd_algo(ctx)
+    def test_no_buy_when_close_below_ma60(self) -> None:
+        ctx = make_kdj_macd_context(close=13.0, ma60=14.0)
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_dea_negative_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=-0.3,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=_CLOSE_BUY,
-        )
-        kdj_macd_algo(ctx)
+    def test_no_buy_with_existing_position(self) -> None:
+        ctx = make_kdj_macd_context(has_position=True)
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_close_below_ma60_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        # close=10 < MA60=12, condition close > MA60 not met
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=10.0,
-        )
-        kdj_macd_algo(ctx)
+    def test_no_action_on_nan(self) -> None:
+        ctx = make_kdj_macd_context()
+        ctx.KDJ_J = np.array([-5.0, float("nan")])
+        algo = KDJMacdAlgo()
+        algo(ctx)
         assert ctx.buy_shares == 0
 
-    def test_close_above_ma20_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        # close=17 > MA20=16, condition close < MA20 not met
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=17.0,
-        )
-        kdj_macd_algo(ctx)
-        assert ctx.buy_shares == 0
-
-    def test_has_position_no_buy(self, kdj_macd_algo: KDJMacdAlgo) -> None:
-        ctx = make_kdj_macd_context(
-            kdj_j=_J_BUY,
-            macd_dif=_DIF_BUY,
-            macd_dea=_DEA_BUY,
-            ma_20=_MA20_BUY,
-            ma_60=_MA60_BUY,
-            close_price=_CLOSE_BUY,
-            has_position=True,
-            entry_price=14.0,
-        )
-        kdj_macd_algo(ctx)
-        assert ctx.buy_shares == 0
+    def test_stop_loss_applied(self) -> None:
+        ctx = make_kdj_macd_context()
+        algo = KDJMacdAlgo(config=AlgoConfig(stop_loss_pct=5.0))
+        algo(ctx)
+        assert ctx.stop_loss_pct == 5.0

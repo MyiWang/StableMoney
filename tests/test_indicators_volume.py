@@ -1,4 +1,4 @@
-"""Tests for volume indicator factory functions: OBV, VOL_MA."""
+"""Tests for volume indicator factory functions."""
 
 from __future__ import annotations
 
@@ -6,17 +6,22 @@ from stablemoney.indicators.volume import OBV, VOL_MA
 
 
 class TestOBV:
-    def test_no_params(self) -> None:
+    def test_default(self) -> None:
         ind = OBV()
         assert ind.name == "OBV"
         assert ind.params == {}
-        assert ind.full_name == "OBV"
+        assert ind.outputs == ("value",)
         assert ind.formula_arg == ""
+        assert ind.full_name == "OBV"
 
 
-class TestVolMA:
+class TestVOLMA:
     def test_default(self) -> None:
-        assert VOL_MA().full_name == "VOL_MA_20"
+        ind = VOL_MA()
+        assert ind.name == "VOL_MA"
+        assert ind.params == {"period": 20}
+        assert ind.outputs == ("value",)
 
-    def test_custom(self) -> None:
-        assert VOL_MA(30).full_name == "VOL_MA_30"
+    def test_custom_period(self) -> None:
+        ind = VOL_MA(30)
+        assert ind.formula_arg == "30"
